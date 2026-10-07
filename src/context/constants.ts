@@ -1,0 +1,7 @@
+export const SUMMARY_COMMAND_CHARS = 100
+export const SUMMARY_ARGUMENT_CHARS = 60
+export const SUMMARY_LAST_WORDS_CHARS = 600
+export const SUMMARY_CALLS_SHOWN = 20
+
+export const CLEARED_INPUT_THRESHOLD = 2_000
+export const CLEARED_INPUT_KEPT = 500

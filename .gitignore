@@ -1,0 +1,9 @@
+node_modules/
+.DS_Store
+*.log
+
+# The benchmark harness and its outputs are published with the results.
+bench/
+
+# Local qmd search indexes.
+.qmd/

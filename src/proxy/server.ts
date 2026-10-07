@@ -1,0 +1,120 @@
+import path from "node:path"
+import { claudeConfigDirs, loadConfig } from "../config"
+import type { Config } from "../config/types"
+import type { Body } from "../context/types"
+import { findSessionFile } from "../transcript/locate"
+import { prepareTranscript } from "../transcript/search"
+import { VERSION } from "../version"
+import { HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, SESSION_HEADER, TRANSCRIPT_HEADER } from "./constants"
+import { sizeOf } from "./estimate"
+import { logRequest } from "./log"
+import { rewrite } from "./rewrite"
+import { loadState, saveState } from "./state"
+import type { Health, Note } from "./types"
+import { inputTokens, watchUsage } from "./usage"
+import { resolveWindow } from "./window"
+
+export function sessionIdOf(headers: Headers, body: Body): string | null {
+  const header = headers.get(SESSION_HEADER)
+  if (header) return header
+  try {
+    return JSON.parse(body.metadata?.user_id ?? "{}").session_id ?? null
+  } catch {
+    return null
+  }
+}
+
+function forwardableHeaders(headers: Headers) {
+  const out = new Headers(headers)
+  out.delete("content-encoding")
+  out.delete("content-length")
+  return out
+}
+
+async function prepare(request: Request, body: Body, config: Config, isCountTokens: boolean) {
+  const sessionId = sessionIdOf(request.headers, body)
+  const trusted = config.eval?.trustHeaders === true
+  const transcriptOverride = trusted ? request.headers.get(TRANSCRIPT_HEADER) : null
+  const sessionFile = transcriptOverride ?? (sessionId ? findSessionFile(sessionId, claudeConfigDirs(config)) : null)
+  const transcript = sessionFile && sessionId
+    ? prepareTranscript(config.search, sessionFile, transcriptOverride ? path.basename(transcriptOverride, ".jsonl") : sessionId)
+    : null
+  const needsWindow = config.mode === "compact" || config.eval?.strategy === "tail"
+  const window = config.window ?? (needsWindow ? await resolveWindow(body.model, request.headers, config.upstream) : null)
+  return rewrite({
+    body,
+    sessionId,
+    config,
+    transcript,
+    window,
+    mayCompact: !isCountTokens,
+    omittedBefore: trusted ? Number(request.headers.get(OMITTED_BEFORE_HEADER) ?? 0) : 0,
+  })
+}
+
+export async function handle(request: Request): Promise<Response> {
+  const config = loadConfig()
+  const url = new URL(request.url)
+  if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid } satisfies Health)
+  const headers = new Headers(request.headers)
+  headers.delete("host")
+  headers.delete("content-length")
+  headers.delete("accept-encoding")
+
+  let bodyText = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text()
+  const isMessages = request.method === "POST" && url.pathname.startsWith("/v1/messages")
+  const isCountTokens = url.pathname.includes("count_tokens")
+  let note: Note = { action: "pass" }
+  let threadKey: string | null = null
+  let sentSize = 0
+
+  if (bodyText && isMessages) {
+    try {
+      const body = JSON.parse(bodyText) as Body
+      const result = await prepare(request, body, config, isCountTokens)
+      note = result.note
+      threadKey = result.threadKey
+      if (result.body !== body) bodyText = JSON.stringify(result.body)
+      sentSize = sizeOf(result.body)
+    } catch (error) {
+      note = { action: "error-passthrough", error: String(error) }
+    }
+  }
+
+  const upstream = await fetch(config.upstream + url.pathname + url.search, { method: request.method, headers, body: bodyText })
+
+  if (upstream.status >= 400 && note.action !== "pass") {
+    const errorText = await upstream.text()
+    logRequest({ path: url.pathname, status: upstream.status, thread: threadKey, ...note, error: errorText.slice(0, LOGGED_ERROR_CHARS) })
+    return new Response(errorText, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
+  }
+
+  const response = new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
+  if (note.action === "pass" || !isMessages || isCountTokens) {
+    if (note.action !== "pass") logRequest({ path: url.pathname, status: upstream.status, ...note })
+    return response
+  }
+
+  return watchUsage(response, (usage) => {
+    const input = inputTokens(usage)
+    logRequest({
+      path: url.pathname,
+      status: upstream.status,
+      thread: threadKey,
+      ...note,
+      input,
+      cacheRead: usage.cache_read_input_tokens ?? 0,
+      cacheWrite: usage.cache_creation_input_tokens ?? 0,
+      uncached: usage.input_tokens ?? 0,
+    })
+    if (threadKey && input > 0 && sentSize > 0) {
+      const state = loadState(threadKey)
+      state.ratio = input / sentSize
+      saveState(threadKey, state)
+    }
+  })
+}
+
+export function serve(port: number) {
+  return Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: IDLE_TIMEOUT_SECONDS, fetch: handle })
+}
