@@ -30,7 +30,8 @@ export function recordSession(sessionId: string, mode: Mode, sessionFile: string
   seen ??= load()
   const previous = seen[sessionId]
   const now = Date.now()
-  if (previous && previous.mode === mode && now - Date.parse(previous.lastSeen) < SESSION_SEEN_INTERVAL_MS) return
+  const needsCwd = !previous?.cwd && sessionFile !== null
+  if (previous && previous.mode === mode && !needsCwd && now - Date.parse(previous.lastSeen) < SESSION_SEEN_INTERVAL_MS) return
   seen[sessionId] = { lastSeen: new Date(now).toISOString(), mode, cwd: previous?.cwd ?? (sessionFile ? cwdOf(sessionFile) : undefined) }
   const kept = Object.entries(seen).sort(([, a], [, b]) => b.lastSeen.localeCompare(a.lastSeen)).slice(0, SESSIONS_KEPT)
   seen = Object.fromEntries(kept)
