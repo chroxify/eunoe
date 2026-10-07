@@ -1,4 +1,4 @@
-import { SUMMARY_ARGUMENT_CHARS, SUMMARY_CALLS_SHOWN, SUMMARY_COMMAND_CHARS, SUMMARY_LAST_WORDS_CHARS } from "./constants"
+import { REMINDER_ONLY, SUMMARY_ARGUMENT_CHARS, SUMMARY_CALLS_SHOWN, SUMMARY_COMMAND_CHARS, SUMMARY_LAST_WORDS_CHARS } from "./constants"
 import { blocks, clean, clip, withoutCacheControl } from "./content"
 import type { Block, Message } from "./types"
 
@@ -66,11 +66,21 @@ function interruptedSummary(turn: Message[]): string {
   ].filter(Boolean).join("\n")
 }
 
+function carriedText(messages: Message[]): Block[] {
+  return messages
+    .filter((m) => m.role === "user")
+    .flatMap((m) => blocks(m).filter((b) => b.type === "text" && String(b.text ?? "").trim() && !REMINDER_ONLY.test(String(b.text))))
+    .map((b) => ({ type: "text", text: b.text }))
+}
+
 export function reduceTurn(turn: Message[]): Message[] {
   const opening: Message[] = []
-  for (let i = 0; i < turn.length && turn[i].role !== "assistant"; i += 1) {
+  let i = 0
+  for (; i < turn.length && turn[i].role !== "assistant"; i += 1) {
     if (turn[i].role === "user") opening.push(clean(turn[i]))
   }
+  const carried = carriedText(turn.slice(i))
+  if (carried.length > 0) opening.push({ role: "user", content: carried })
   opening.push(...mergedHarness(turn))
   const last = [...turn].reverse().find((m) => m.role !== "system")!
   const content = last.role === "assistant" ? blocks(last) : []

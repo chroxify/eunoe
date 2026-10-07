@@ -21,7 +21,7 @@ export const disable: Command = {
     if (ids.length) {
       const sessions = { ...config.sessions }
       for (const id of ids) {
-        if (config.scope === "all") sessions[id] = "off"
+        if (config.scope === "all") sessions[id] = { ...sessions[id], mode: "off" }
         else delete sessions[id]
       }
       saveConfig({ sessions })

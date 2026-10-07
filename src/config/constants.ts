@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import path from "node:path"
-import type { Config, Mode, Scope, SearchMode } from "./types"
+import type { Config, Mode, Scope, SearchMode, Tunable } from "./types"
 
 export const EUNOE_DIR = process.env.EUNOE_DIR ?? path.join(homedir(), ".eunoe")
 
@@ -28,5 +28,6 @@ export const DEFAULTS: Config = {
 
 export const MODES: Mode[] = ["off", "trim", "compact"]
 export const SEARCH_MODES: SearchMode[] = ["jsonl", "markdown", "xml", "qmd"]
+export const TUNABLES: Tunable[] = ["compactAt", "keepTurns", "search"]
 export const SCOPES: Scope[] = ["all", "sessions"]
 export const SESSION_ID_PATTERN = /^[a-zA-Z0-9-]+$/

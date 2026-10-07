@@ -1,5 +1,5 @@
 import path from "node:path"
-import { loadConfig, modeFor } from "../../config"
+import { loadConfig, modeFor, overrides } from "../../config"
 import { seenSessions } from "../../proxy/sessions"
 import { VERSION } from "../../version"
 import { proxyUrl } from "../claude-settings"
@@ -39,7 +39,8 @@ export const status: Command = {
       for (const [id, session] of sessions) {
         const active = modeFor(config, id)
         const label = active === "off" ? c.dim("off".padEnd(7)) : c.green(active.padEnd(7))
-        line(`    ${c.cyan(shortId(id))}  ${label}  ${c.dim(ago(session.lastSeen).padEnd(8))}  ${session.cwd ? tilde(session.cwd) : ""}`)
+        const own = Object.entries(overrides(config.sessions[id])).map(([name, value]) => `${name} ${value}`).join(" · ")
+        line(`    ${c.cyan(shortId(id))}  ${label}  ${c.dim(ago(session.lastSeen).padEnd(8))}  ${session.cwd ? tilde(session.cwd) : ""}${own ? `  ${c.dim(own)}` : ""}`)
       }
     }
 

@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import path from "node:path"
-import type { Mode } from "../config/types"
+import type { Mode, Tunable } from "../config/types"
 import type { OptionRow } from "./types"
 
 export const TAGLINE = "Context management for Claude Code that never forgets what matters."
@@ -9,6 +9,18 @@ export const MODE_DESCRIPTIONS: Record<Mode, string> = {
   compact: "Full context until the window is nearly full, then eunoe's cut",
   trim: "Every finished turn kept as your message and the final reply",
   off: "Passthrough. Claude Code compacts on its own",
+}
+
+export const TUNABLE_DESCRIPTIONS: Record<Tunable, string> = {
+  compactAt: "Share of the context window that triggers compact's cut",
+  keepTurns: "Earlier turns kept after a cut",
+  search: "How transcripts are written for the agent to search",
+}
+
+export const TUNABLE_HINTS: Record<Tunable, string> = {
+  compactAt: "a number above 0, up to 1",
+  keepTurns: "a whole number or all",
+  search: "markdown, xml, jsonl or qmd",
 }
 
 export const GLOBAL_OPTIONS: OptionRow[] = [

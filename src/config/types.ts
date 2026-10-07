@@ -15,14 +15,23 @@ export interface EvalConfig {
   trustHeaders?: boolean
 }
 
-export interface Config {
-  mode: Mode
-  scope: Scope
-  sessions: Record<string, Mode | null>
-  port: number
+export interface Tunables {
   compactAt: number
   keepTurns: number | "all"
   search: SearchMode
+}
+
+export type Tunable = keyof Tunables
+
+export interface SessionSettings extends Partial<Tunables> {
+  mode?: Mode
+}
+
+export interface Config extends Tunables {
+  mode: Mode
+  scope: Scope
+  sessions: Record<string, SessionSettings>
+  port: number
   upstream: string
   claudeConfigDirs: string[]
   window?: number

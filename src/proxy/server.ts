@@ -1,5 +1,5 @@
 import path from "node:path"
-import { claudeConfigDirs, loadConfig, modeFor } from "../config"
+import { claudeConfigDirs, loadConfig, settingsFor } from "../config"
 import type { Config } from "../config/types"
 import type { Body } from "../context/types"
 import { findSessionFile } from "../transcript/locate"
@@ -7,11 +7,12 @@ import { prepareTranscript } from "../transcript/search"
 import { VERSION } from "../version"
 import { HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, SESSION_HEADER, TRANSCRIPT_HEADER } from "./constants"
 import { sizeOf } from "./estimate"
+import { contextFingerprint } from "./fingerprint"
 import { logRequest } from "./log"
 import { rewrite } from "./rewrite"
 import { recordSession } from "./sessions"
 import { loadState, saveState } from "./state"
-import type { Health, Note } from "./types"
+import type { ContextFingerprint, Health, Note } from "./types"
 import { inputTokens, watchUsage } from "./usage"
 import { resolveWindow } from "./window"
 
@@ -34,7 +35,7 @@ function forwardableHeaders(headers: Headers) {
 
 async function prepare(request: Request, body: Body, base: Config, isCountTokens: boolean) {
   const sessionId = sessionIdOf(request.headers, body)
-  const config = { ...base, mode: modeFor(base, sessionId) }
+  const config = settingsFor(base, sessionId)
   const trusted = config.eval?.trustHeaders === true
   const transcriptOverride = trusted ? request.headers.get(TRANSCRIPT_HEADER) : null
   const sessionFile = transcriptOverride ?? (sessionId ? findSessionFile(sessionId, claudeConfigDirs(config)) : null)
@@ -71,6 +72,7 @@ export async function handle(request: Request): Promise<Response> {
   let note: Note = { action: "pass" }
   let threadKey: string | null = null
   let sentSize = 0
+  let sent: (ContextFingerprint & { session: string | null }) | null = null
 
   if (bodyText && isMessages) {
     try {
@@ -80,6 +82,7 @@ export async function handle(request: Request): Promise<Response> {
       threadKey = result.threadKey
       if (result.body !== body) bodyText = JSON.stringify(result.body)
       sentSize = sizeOf(result.body)
+      if (config.eval) sent = { session: sessionIdOf(request.headers, body), ...contextFingerprint(result.body) }
     } catch (error) {
       note = { action: "error-passthrough", error: String(error) }
     }
@@ -95,7 +98,7 @@ export async function handle(request: Request): Promise<Response> {
 
   const response = new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
   if (note.action === "pass" || !isMessages || isCountTokens) {
-    if (note.action !== "pass") logRequest({ path: url.pathname, status: upstream.status, ...note })
+    if (note.action !== "pass" || sent) logRequest({ path: url.pathname, status: upstream.status, ...note, ...(sent && { context: sent }) })
     return response
   }
 
@@ -110,6 +113,7 @@ export async function handle(request: Request): Promise<Response> {
       cacheRead: usage.cache_read_input_tokens ?? 0,
       cacheWrite: usage.cache_creation_input_tokens ?? 0,
       uncached: usage.input_tokens ?? 0,
+      ...(sent && { context: sent }),
     })
     if (threadKey && input > 0 && sentSize > 0) {
       const state = loadState(threadKey)

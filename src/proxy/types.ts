@@ -11,6 +11,12 @@ export interface ThreadState {
 
 export type Note = Record<string, unknown>
 
+export interface ContextFingerprint {
+  system: string
+  tools: string
+  skills: string[]
+}
+
 export interface RewriteInput {
   body: Body
   sessionId: string | null

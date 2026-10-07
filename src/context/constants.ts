@@ -5,3 +5,5 @@ export const SUMMARY_CALLS_SHOWN = 20
 
 export const CLEARED_INPUT_THRESHOLD = 2_000
 export const CLEARED_INPUT_KEPT = 500
+
+export const REMINDER_ONLY = /^\s*(?:<system-reminder>[\s\S]*?<\/system-reminder>\s*)+$/

@@ -94,7 +94,7 @@ describe("per-session scope", () => {
     const managed = freshSession()
     const other = freshSession()
     const previous = readFileSync(paths.config, "utf8")
-    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "trim", scope: "sessions", sessions: { [managed]: null } }))
+    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "trim", scope: "sessions", sessions: { [managed]: {} } }))
     try {
       const messages = session(3)
       await (await post(messages, { "x-claude-code-session-id": other })).text()
@@ -109,3 +109,41 @@ describe("per-session scope", () => {
     }
   })
 })
+
+describe("per-session settings", () => {
+  test("a session's own compactAt decides when its cut happens; others keep the default", async () => {
+    const early = freshSession()
+    const other = freshSession()
+    const previous = readFileSync(paths.config, "utf8")
+    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "compact", compactAt: 0.9, sessions: { [early]: { compactAt: 0.05 } } }))
+    try {
+      const messages = session(6, 2_000)
+      await (await post(messages, { "x-claude-code-session-id": other })).text()
+      expect(JSON.parse(lastTo("/v1/messages").body).messages).toEqual(messages)
+      await (await post(messages, { "x-claude-code-session-id": early })).text()
+      expect(JSON.parse(lastTo("/v1/messages").body).messages.length).toBeLessThan(messages.length)
+    } finally {
+      writeFileSync(paths.config, previous)
+    }
+  })
+})
+
+describe("evaluation logging", () => {
+  test("each request records what the agent was given: system prompt, tools and loaded skills", async () => {
+    const id = freshSession()
+    const previous = readFileSync(paths.config, "utf8")
+    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "off", eval: {} }))
+    try {
+      const messages = [...session(1), { role: "user", content: [{ type: "text", text: "Base directory for this skill: /plugins/x/skills/deploy\n\n# Deploy" }] }]
+      await (await post(messages, { "x-claude-code-session-id": id })).text()
+      await Bun.sleep(50)
+      const entry = logged().at(-1)
+      expect(entry.context.skills).toEqual(["deploy"])
+      expect(entry.context.system).toHaveLength(12)
+      expect(entry.context.tools).toHaveLength(12)
+    } finally {
+      writeFileSync(paths.config, previous)
+    }
+  })
+})
+

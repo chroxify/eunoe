@@ -21,3 +21,6 @@ export const IDLE_TIMEOUT_SECONDS = 255
 export const SESSION_SEEN_INTERVAL_MS = 30_000
 export const SESSION_HEAD_BYTES = 65_536
 export const SESSIONS_KEPT = 200
+
+export const FINGERPRINT_LENGTH = 12
+export const SKILL_MARKER = /Base directory for this skill: ([^\s"\\]+)/g

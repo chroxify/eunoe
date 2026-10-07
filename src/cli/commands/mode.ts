@@ -23,17 +23,17 @@ export const mode: Command = {
         const current = name === config.mode
         line(`  ${current ? c.green("●") : c.dim("○")} ${current ? c.bold(name.padEnd(8)) : name.padEnd(8)}  ${c.dim(description)}`)
       }
-      const overrides = Object.entries(config.sessions).filter(([, value]) => value)
-      if (overrides.length) {
+      const own = Object.entries(config.sessions).filter(([, settings]) => settings.mode)
+      if (own.length) {
         line()
-        for (const [id, value] of overrides) line(`  ${c.dim(shortId(id))}  ${value}`)
+        for (const [id, settings] of own) line(`  ${c.dim(shortId(id))}  ${settings.mode}`)
       }
       line()
       return
     }
     if (!MODES.includes(next)) fail(`Unknown mode: ${next}`, "Choose compact, trim or off.")
     if (ids.length) {
-      saveConfig({ sessions: { ...config.sessions, ...Object.fromEntries(ids.map((id) => [id, next])) } })
+      saveConfig({ sessions: { ...config.sessions, ...Object.fromEntries(ids.map((id) => [id, { ...config.sessions[id], mode: next }])) } })
       ok(`Mode ${c.bold(next)} for ${ids.map(shortId).join(", ")}  ${c.dim(MODE_DESCRIPTIONS[next])}`)
       if (!routedDirs(config).length) warn("Claude Code isn't routed through eunoe. Run `eunoe enable --session <id>`.")
       const unseen = ids.filter((id) => !isKnown(id))

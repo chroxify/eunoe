@@ -30,6 +30,23 @@ describe("turns", () => {
     expect(reduceTurn(turn(1))).toEqual([user("task 1"), { role: "assistant", content: [{ type: "text", text: "answer 1" }] }])
   })
 
+  test("a skill loaded or a message sent during the turn survives; tool output and stale reminders don't", () => {
+    const skill = "Base directory for this skill: /skills/deploy\n\n# Deploy\nAlways deploy to staging first."
+    const loaded: Message[] = [
+      user("ship it"),
+      { role: "assistant", content: [{ type: "tool_use", id: "s1", name: "Skill", input: { skill: "deploy" } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "s1", content: "Launching skill: deploy" }, { type: "text", text: skill }] },
+      call("b1"),
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "b1", content: "x".repeat(500) }, { type: "text", text: "<system-reminder>todo list changed</system-reminder>" }, { type: "text", text: "use the eu region" }] },
+      reply("shipped"),
+    ]
+    expect(reduceTurn(loaded)).toEqual([
+      user("ship it"),
+      { role: "user", content: [{ type: "text", text: skill }, { type: "text", text: "use the eu region" }] },
+      { role: "assistant", content: [{ type: "text", text: "shipped" }] },
+    ])
+  })
+
   test("an interrupted turn keeps its last words and its tool calls instead of a stray narration", () => {
     const reduced = text(reduceTurn(turn(1, { done: false })))
     expect(reduced).toContain("interrupted before a final reply")

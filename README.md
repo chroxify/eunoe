@@ -172,6 +172,7 @@ handled explicitly.
 |---|---|
 | **Esc mid-work**, then a new message | The interrupted turn ends there. Your new message, marker included, opens the next turn. |
 | **Typing while the agent works** | Claude Code sends a mid-conversation `system` message. It stays inside the running turn; in a reduced turn it is merged in right before the final reply. |
+| **A skill loads mid-turn** | Its instructions arrive next to tool output, inside the turn. When that turn is reduced they're kept, as is anything you typed while it ran, so the agent keeps following the skill. Stale system reminders are dropped. |
 | **An interrupted turn gets reduced** | No final reply exists, so eunoe writes one: `[This turn was interrupted before a final reply.] Last thing you said: … Tool calls (12): Edit src/app.ts; Bash \`bun test\`; …` |
 | **The cut lands on an interrupted turn** | Kept verbatim. The agent sees exactly where it stopped. |
 | **Esc-Esc rewind past the cut** | eunoe notices its cut turn is gone from the history and starts over from whatever Claude Code sends. |
@@ -272,6 +273,7 @@ eunoe disable            # new sessions bypass eunoe; running ones keep working
 eunoe disable --session 1baada86  # stop managing one session from its next request
 eunoe mode trim --session 1baada86  # a different mode for one session
 eunoe mode compact       # off | trim | compact
+eunoe set compactAt 0.8 --session 1baada86  # any setting, for one session or all
 eunoe status             # what's running, plus cache stats for recent requests
 eunoe uninstall          # disable and remove the background proxy
 eunoe serve              # run the proxy in the foreground (no launchd)
@@ -282,6 +284,12 @@ ones it has seen with their working directory. A unique prefix is enough. With
 `--session`, every other session still goes through the proxy but untouched, so
 you can switch any of them on later without a restart, and Claude Code keeps its
 own auto-compact as a backstop for them.
+
+Everything can be set per session: the mode, and `compactAt`, `keepTurns` and
+`search` through `eunoe set <key> <value> --session <id>`. Without `--session`
+it changes the default for every session; `eunoe set` alone lists the defaults
+and each session's own values, and `default` as the value drops a session's
+own. Changes apply from the session's next request.
 
 `~/.eunoe/config.json`:
 

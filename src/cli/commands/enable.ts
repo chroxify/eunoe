@@ -15,7 +15,10 @@ function scoped(config: Config, ids: string[]): Partial<Config> {
   if (!ids.length) return { scope: "all" }
   const managingAll = config.scope === "all" && routedDirs(config).length > 0
   const sessions = { ...config.sessions }
-  for (const id of ids) sessions[id] = sessions[id] === "off" ? null : sessions[id] ?? null
+  for (const id of ids) {
+    const { mode, ...rest } = sessions[id] ?? {}
+    sessions[id] = mode && mode !== "off" ? { mode, ...rest } : rest
+  }
   return { scope: managingAll ? "all" : "sessions", sessions }
 }
 
@@ -50,7 +53,7 @@ export const enable: Command = {
     line()
     rows([
       ["Mode", `${c.bold(config.mode)}  ${c.dim(MODE_DESCRIPTIONS[config.mode])}`],
-      ["Sessions", config.scope === "all" ? "all" : `only ${Object.entries(config.sessions).filter(([, mode]) => mode !== "off").map(([id]) => shortId(id)).join(", ")}`],
+      ["Sessions", config.scope === "all" ? "all" : `only ${Object.entries(config.sessions).filter(([, own]) => own.mode !== "off").map(([id]) => shortId(id)).join(", ")}`],
     ])
     line()
     const unseen = ids.filter((id) => !isKnown(id))
