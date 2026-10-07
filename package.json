@@ -3,12 +3,28 @@
   "version": "0.1.0",
   "description": "Context management for Claude Code that never forgets what matters.",
   "license": "MIT",
-  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chroxify/eunoe.git"
+  },
+  "homepage": "https://github.com/chroxify/eunoe#readme",
+  "keywords": [
+    "claude-code",
+    "claude",
+    "anthropic",
+    "context",
+    "compaction",
+    "proxy"
+  ],
   "type": "module",
   "bin": {
     "eunoe": "src/cli/main.ts"
   },
-  "files": ["src", "README.md", "LICENSE"],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "bun": ">=1.1"
   },
