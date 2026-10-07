@@ -1,5 +1,5 @@
 {
-  "name": "eunoe",
+  "name": "@chroxify/eunoe",
   "version": "0.1.0",
   "description": "Context management for Claude Code that never forgets what matters.",
   "license": "MIT",
@@ -36,5 +36,8 @@
   "devDependencies": {
     "@types/bun": "^1.4.2",
     "typescript": "^7.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

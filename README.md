@@ -45,9 +45,8 @@ prefix written to cache anyway.
 ## Install
 
 ```sh
-git clone https://github.com/chroxify/eunoe && cd eunoe
-bun install && bun link   # puts `eunoe` on your PATH
-eunoe install             # background proxy + ANTHROPIC_BASE_URL in ~/.claude/settings.json
+bun add -g @chroxify/eunoe   # puts `eunoe` on your PATH
+eunoe install                # background proxy + ANTHROPIC_BASE_URL in ~/.claude/settings.json
 ```
 
 Then use Claude Code exactly as before. New sessions go through eunoe; restart
