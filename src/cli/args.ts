@@ -5,7 +5,7 @@ export function flagValues(args: string[], flag: string): string[] {
   for (let i = 0; i < args.length; i += 1) {
     if (args[i] !== flag) continue
     const value = args[i + 1]
-    if (!value || value.startsWith("-")) fail(`${flag} needs a value`, `eunoe install ${flag} <dir>`)
+    if (!value || value.startsWith("-")) fail(`${flag} needs a value`)
     values.push(value)
     i += 1
   }

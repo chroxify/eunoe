@@ -1,6 +1,6 @@
 import { existsSync, readdirSync } from "node:fs"
 import path from "node:path"
-import { SESSION_ID_PATTERN } from "./constants"
+import { SESSION_ID_PATTERN } from "../config/constants"
 
 const found = new Map<string, string>()
 

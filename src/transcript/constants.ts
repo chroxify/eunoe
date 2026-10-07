@@ -13,4 +13,3 @@ export const TURN_COUNT_FILE = ".turns"
 export const INDEX_FILE = "index.md"
 export const QMD_DIR = ".qmd"
 
-export const SESSION_ID_PATTERN = /^[a-zA-Z0-9-]+$/

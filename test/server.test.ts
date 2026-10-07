@@ -88,3 +88,24 @@ describe("proxy", () => {
     expect(lastTo("/v1/messages").body).toBe("{not json")
   })
 })
+
+describe("per-session scope", () => {
+  test("only the sessions you enable get rewritten; the rest pass through and are remembered", async () => {
+    const managed = freshSession()
+    const other = freshSession()
+    const previous = readFileSync(paths.config, "utf8")
+    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "trim", scope: "sessions", sessions: { [managed]: null } }))
+    try {
+      const messages = session(3)
+      await (await post(messages, { "x-claude-code-session-id": other })).text()
+      expect(JSON.parse(lastTo("/v1/messages").body).messages).toEqual(messages)
+      await (await post(messages, { "x-claude-code-session-id": managed })).text()
+      expect(JSON.parse(lastTo("/v1/messages").body).messages.length).toBeLessThan(messages.length)
+      const seen = JSON.parse(readFileSync(paths.sessions, "utf8"))
+      expect(seen[other].mode).toBe("off")
+      expect(seen[managed].mode).toBe("trim")
+    } finally {
+      writeFileSync(paths.config, previous)
+    }
+  })
+})

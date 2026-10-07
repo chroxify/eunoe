@@ -7,6 +7,7 @@ export interface Command {
   usage: string
   details?: string[]
   options?: OptionRow[]
+  hidden?: boolean
   run: (args: string[]) => void | Promise<void>
 }
 

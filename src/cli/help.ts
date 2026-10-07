@@ -13,12 +13,12 @@ export function printHelp(commands: Record<string, Command>) {
   line(`    eunoe ${c.cyan("<command>")} ${c.dim("[options]")}`)
   line()
   line(`  ${c.dim("Commands")}`)
-  for (const [name, command] of Object.entries(commands)) line(`    ${c.cyan(name.padEnd(width))}   ${command.summary}`)
+  for (const [name, command] of Object.entries(commands).filter(([, command]) => !command.hidden)) line(`    ${c.cyan(name.padEnd(width))}   ${command.summary}`)
   line()
   line(`  ${c.dim("Options")}`)
   for (const [flag, description] of GLOBAL_OPTIONS) line(`    ${flag.padEnd(width)}   ${description}`)
   line()
-  line(`  ${c.dim("Run")} eunoe ${c.cyan("<command>")} --help ${c.dim("for details.")}`)
+  line(`  ${c.dim("Run")} eunoe ${c.cyan("<command>")} --help ${c.dim("for details.")} ${c.dim("`ee` works anywhere `eunoe` does.")}`)
   line()
 }
 

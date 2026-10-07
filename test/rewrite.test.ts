@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { rewrite } from "../src/proxy/rewrite"
 import type { Body } from "../src/context/types"
-import { config, freshSession, session, transcript, user, reply } from "./fixtures"
+import { call, config, freshSession, reply, result, session, transcript, user } from "./fixtures"
 
 const TOOLS = [{ name: "Bash" }]
 const body = (messages: Body["messages"]): Body => ({ system: "s", tools: TOOLS, messages })
@@ -124,5 +124,42 @@ describe("evaluation strategies", () => {
     const out = run(b, { eval: { strategy: "guide" } })
     expect(out.body.messages).toBe(b.messages)
     expect(JSON.stringify(out.body.system)).toContain("full transcript")
+  })
+})
+
+describe("rolling", () => {
+  const rolling = { eval: { rolling: { keep: 2, budget: 5_000 } } }
+
+  test("past the budget, every turn but the last few shrinks while those stay whole", () => {
+    const out = run(body(session(10, 3_000)), rolling, 1_000_000)
+    const sent = text(out.body)
+    expect(out.note.actions).toEqual(["roll"])
+    for (let i = 1; i <= 10; i += 1) expect(sent).toContain(`answer ${i}`)
+    expect(sent).not.toContain("step a8")
+    expect(sent).toContain("step a9")
+    expect(sent).toContain("step a10")
+    expect(sent).toContain("step z")
+  })
+
+  test("between rolls the request only grows at the end, so the cache keeps hitting", () => {
+    const id = freshSession()
+    const history = session(10, 3_000)
+    const first = text(run(body(history), rolling, 1_000_000, id).body)
+    const grown = run(body([...history, ...[reply("more")]]), rolling, 1_000_000, id)
+    expect(grown.note.actions).toBeUndefined()
+    expect(text(grown.body).startsWith(first.slice(0, -1))).toBe(true)
+  })
+
+  test("a new turn doesn't roll again until a budget's worth of older detail has built up", () => {
+    const id = freshSession()
+    const history = session(10, 3_000)
+    run(body(history), rolling, 1_000_000, id)
+    const next = run(body([...history, reply("done"), user("another"), call("y"), result("y", 3_000)]), rolling, 1_000_000, id)
+    expect(next.note.actions).toBeUndefined()
+  })
+
+  test("under the budget nothing moves", () => {
+    const b = body(session(3))
+    expect(run(b, rolling, 1_000_000).body).toBe(b)
   })
 })

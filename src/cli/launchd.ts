@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { LAUNCH_AGENT_PLIST as PLIST, LAUNCHD_LABEL } from "./constants"
 
@@ -11,7 +11,7 @@ export function isInstalled() {
 export function installAgent(program: string[], logFile: string) {
   mkdirSync(path.dirname(PLIST), { recursive: true })
   const args = program.map((arg) => `<string>${arg}</string>`).join("")
-  writeFileSync(PLIST, `<?xml version="1.0" encoding="UTF-8"?>
+  const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>Label</key><string>${LAUNCHD_LABEL}</string>
@@ -21,7 +21,12 @@ export function installAgent(program: string[], logFile: string) {
   <key>StandardOutPath</key><string>${logFile}</string>
   <key>StandardErrorPath</key><string>${logFile}</string>
 </dict></plist>
-`)
+`
+  if (existsSync(PLIST) && readFileSync(PLIST, "utf8") === plist) {
+    Bun.spawnSync(["launchctl", "load", PLIST])
+    return
+  }
+  writeFileSync(PLIST, plist)
   Bun.spawnSync(["launchctl", "unload", PLIST])
   Bun.spawnSync(["launchctl", "load", PLIST])
 }

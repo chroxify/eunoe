@@ -1,10 +1,12 @@
 import path from "node:path"
-import { loadConfig } from "../../config"
+import { loadConfig, modeFor } from "../../config"
+import { seenSessions } from "../../proxy/sessions"
 import { VERSION } from "../../version"
 import { proxyUrl } from "../claude-settings"
-import { MODE_DESCRIPTIONS } from "../constants"
+import { MODE_DESCRIPTIONS, SESSIONS_SHOWN } from "../constants"
 import { probe, recentRequests, routedDirs } from "../inspect"
 import * as launchd from "../launchd"
+import { shortId } from "../sessions"
 import type { Command } from "../types"
 import { ago, c, line, rows, tilde, tokens, warn } from "../ui"
 
@@ -22,12 +24,24 @@ export const status: Command = {
     line()
     rows([
       ["Proxy", health ? `${c.green("●")} running on ${c.cyan(proxyUrl(config.port))}` : `${c.red("○")} not running`],
-      ["Claude Code", routed.length ? `${c.green("●")} routed through eunoe` : `${c.dim("○")} not routed ${c.dim("(eunoe install)")}`],
+      ["Claude Code", routed.length ? `${c.green("●")} routed through eunoe` : `${c.dim("○")} not routed ${c.dim("(eunoe enable)")}`],
       ["Mode", `${c.bold(config.mode)}  ${c.dim(MODE_DESCRIPTIONS[config.mode])}`],
+      ["Scope", config.scope === "all" ? "every session" : `only the sessions you enabled ${c.dim("(eunoe enable --session <id>)")}`],
       ["Search", `${config.search} transcripts`],
       ["Background", launchd.isInstalled() ? "launchd agent" : c.dim("none")],
     ])
     for (const dir of routed) line(`  ${" ".repeat(13)}${c.dim(tilde(path.join(dir, "settings.json")))}`)
+
+    const sessions = seenSessions().slice(0, SESSIONS_SHOWN)
+    if (sessions.length) {
+      line()
+      line(`  ${c.dim("Recent sessions")}`)
+      for (const [id, session] of sessions) {
+        const active = modeFor(config, id)
+        const label = active === "off" ? c.dim("off".padEnd(7)) : c.green(active.padEnd(7))
+        line(`    ${c.cyan(shortId(id))}  ${label}  ${c.dim(ago(session.lastSeen).padEnd(8))}  ${session.cwd ? tilde(session.cwd) : ""}`)
+      }
+    }
 
     if (recent.length) {
       const sum = (key: string) => recent.reduce((total, entry) => total + (entry[key] ?? 0), 0)

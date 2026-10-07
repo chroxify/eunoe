@@ -4,7 +4,14 @@ import { splitTurns, turnFingerprint } from "../context/turns"
 import { DEFAULT_RATIO, PROTECTED_OUTPUTS } from "./constants"
 import { estimator, targetSize } from "./estimate"
 import { resetCut } from "./state"
+import type { Message } from "../context/types"
 import type { CompactInput, CompactResult } from "./types"
+
+function settledCut(turns: Message[][], index: number) {
+  let cut = index
+  while (cut > 1 && JSON.stringify(turns[cut][0].content).includes("[Request interrupted")) cut -= 1
+  return cut
+}
 
 export function compact({ body, config, state, window, guide, mayCompact, omittedBefore = 0 }: CompactInput): CompactResult {
   const { turns } = splitTurns(body.messages)
@@ -15,9 +22,9 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
     resetCut(state)
     stateChanged = true
   }
+  const rolling = config.eval?.rolling
   if (cutIndex <= 0 && config.eval?.forceCut && turns.length >= 3) {
-    let forced = turns.length - 2
-    while (forced > 1 && JSON.stringify(turns[forced][0].content).includes("[Request interrupted")) forced -= 1
+    const forced = settledCut(turns, Math.max(1, turns.length - 1 - (rolling?.keep ?? 1)))
     cutIndex = forced
     state.cut = turnFingerprint(turns[forced])
     stateChanged = true
@@ -41,16 +48,26 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
   let estimate = size.of(messages)
   const actions: string[] = []
   const current = turns.length - 1
+  const moveCut = (index: number, action: string) => {
+    cutIndex = index
+    resetCut(state)
+    state.cut = turnFingerprint(turns[index])
+    actions.push(action)
+    messages = build()
+    estimate = size.of(messages)
+  }
+
+  if (mayCompact && rolling) {
+    const next = settledCut(turns, current - rolling.keep)
+    const backlog = size.of(turns.slice(Math.max(cutIndex, 0), Math.max(next, 0)).flat()) - size.fixed
+    if (next >= 1 && next > cutIndex && backlog > rolling.budget) {
+      moveCut(next, "roll")
+      stateChanged = true
+    }
+  }
 
   if (mayCompact && estimate > limit) {
-    if (current > 0 && current > cutIndex) {
-      cutIndex = current
-      resetCut(state)
-      state.cut = turnFingerprint(turns[current])
-      actions.push("cut")
-      messages = build()
-      estimate = size.of(messages)
-    }
+    if (current > 0 && current > cutIndex) moveCut(current, "cut")
     while (estimate > target) {
       const keep = Math.min(state.keep ?? configuredKeep, cutIndex - 1)
       if (cutIndex > 0 && keep > 0) {
@@ -78,7 +95,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
     stateChanged,
     note: {
       action: cutIndex > 0 ? "compact" : "full",
-      compacted: actions.includes("cut"),
+      compacted: actions.includes("cut") || actions.includes("roll"),
       actions: actions.length ? actions : undefined,
       cutTurn: cutIndex > 0 ? cutIndex : null,
       keep: state.keep,

@@ -1,13 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
-import { DEFAULTS, EUNOE_DIR, MODES, paths, SEARCH_MODES } from "./constants"
-import type { Config } from "./types"
+import { DEFAULTS, EUNOE_DIR, MODES, paths, SCOPES, SEARCH_MODES } from "./constants"
+import type { Config, Mode } from "./types"
 
 export function normalizeConfig(raw: Record<string, any>): Config {
   const config: Config = { ...DEFAULTS, ...raw }
   if (!MODES.includes(config.mode)) config.mode = DEFAULTS.mode
   if (!SEARCH_MODES.includes(config.search)) config.search = DEFAULTS.search
+  if (!SCOPES.includes(config.scope)) config.scope = DEFAULTS.scope
+  const sessions = config.sessions && typeof config.sessions === "object" && !Array.isArray(config.sessions) ? config.sessions : {}
+  config.sessions = Object.fromEntries(Object.entries(sessions).filter(([, value]) => value === null || MODES.includes(value as Mode)))
   if (typeof config.compactAt !== "number" || config.compactAt <= 0 || config.compactAt > 1) config.compactAt = DEFAULTS.compactAt
   if (config.keepTurns !== "all" && (typeof config.keepTurns !== "number" || config.keepTurns < 0)) config.keepTurns = DEFAULTS.keepTurns
   if (!Number.isInteger(config.port)) config.port = DEFAULTS.port
@@ -46,4 +49,13 @@ export function claudeConfigDirs(config: Config): string[] {
   if (process.env.CLAUDE_CONFIG_DIR) dirs.add(process.env.CLAUDE_CONFIG_DIR)
   for (const dir of config.claudeConfigDirs) dirs.add(dir.replace(/^~(?=$|\/)/, homedir()))
   return [...dirs]
+}
+
+export function modeFor(config: Config, sessionId: string | null): Mode {
+  if (sessionId && sessionId in config.sessions) return config.sessions[sessionId] ?? config.mode
+  return config.scope === "all" ? config.mode : "off"
+}
+
+export function compactionOwner(config: Config): Mode {
+  return config.scope === "all" ? config.mode : "off"
 }

@@ -45,14 +45,14 @@ prefix written to cache anyway.
 ## Install
 
 ```sh
-bun add -g @chroxify/eunoe   # puts `eunoe` on your PATH
-eunoe install                # background proxy + ANTHROPIC_BASE_URL in ~/.claude/settings.json
+bun add -g @chroxify/eunoe   # puts `eunoe` (and the short `ee`) on your PATH
+eunoe enable                 # starts the background proxy, routes Claude Code through it
 ```
 
 Then use Claude Code exactly as before. New sessions go through eunoe; restart
-any that are already running. `eunoe uninstall` reverses it.
+any that are already running. `eunoe disable` turns it off again.
 
-Requires [Bun](https://bun.sh). `install` sets up a launchd agent on macOS; on
+Requires [Bun](https://bun.sh). `enable` sets up a launchd agent on macOS; on
 other platforms, keep `eunoe serve` running however you like (systemd, a
 terminal) and the rest works the same.
 
@@ -138,7 +138,7 @@ eunoe mode compact   # or trim, or off
 ```
 
 Whichever is on owns compaction: eunoe disables Claude Code's auto-compact while
-active and hands it back on `off` or `uninstall`.
+active and hands it back on `off` or `disable`.
 
 ## What counts as a final reply
 
@@ -228,7 +228,7 @@ The interesting ones are all about what happens when the cut itself doesn't fit.
 | **Subagents, titles, side calls** | Each conversation is its own thread (session id + a fingerprint of its first turn) with its own cut. |
 | **Mid-conversation system messages** | Never dropped. The API only accepts them directly before an assistant message, so they are merged into that position. |
 | **Thinking blocks** | Kept with their signatures in the live turn, where tool use requires them. Dropped from reduced turns. |
-| **eunoe is down** | Every Claude request fails. launchd keeps it alive; `uninstall` leaves it running as a passthrough so sessions already pointed at it survive, and `stop` removes it once they're restarted. |
+| **eunoe is down** | Every Claude request fails. launchd keeps it alive; `disable` leaves it running so sessions already pointed at it survive, and `uninstall` removes it once they're restarted. |
 
 ## Early results
 
@@ -266,13 +266,22 @@ task-continuation test, and reports whatever it finds.
 ## Usage
 
 ```sh
-eunoe serve              # run in the foreground
+eunoe enable             # route Claude Code through eunoe (sets up the proxy the first time)
+eunoe enable --session 1baada86   # or manage only the sessions you name
+eunoe disable            # new sessions bypass eunoe; running ones keep working
+eunoe disable --session 1baada86  # stop managing one session from its next request
+eunoe mode trim --session 1baada86  # a different mode for one session
 eunoe mode compact       # off | trim | compact
-eunoe status             # config, plus cache stats for recent requests
-eunoe install            # background proxy + Claude Code settings
-eunoe uninstall          # new sessions bypass eunoe; proxy stays up as a passthrough
-eunoe stop               # remove the background proxy
+eunoe status             # what's running, plus cache stats for recent requests
+eunoe uninstall          # disable and remove the background proxy
+eunoe serve              # run the proxy in the foreground (no launchd)
 ```
+
+Session ids are in Claude Code's `/status`, and `eunoe status` lists the recent
+ones it has seen with their working directory. A unique prefix is enough. With
+`--session`, every other session still goes through the proxy but untouched, so
+you can switch any of them on later without a restart, and Claude Code keeps its
+own auto-compact as a backstop for them.
 
 `~/.eunoe/config.json`:
 
@@ -292,7 +301,7 @@ say) need eunoe to know about it, both to find their transcripts and to route
 them through the proxy:
 
 ```sh
-eunoe install --config-dir ~/.my-tool/claude-account-1
+eunoe enable --config-dir ~/.my-tool/claude-account-1
 ```
 
 The directory is remembered in `claudeConfigDirs`.

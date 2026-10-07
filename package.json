@@ -18,7 +18,8 @@
   ],
   "type": "module",
   "bin": {
-    "eunoe": "src/cli/main.ts"
+    "eunoe": "src/cli/main.ts",
+    "ee": "src/cli/main.ts"
   },
   "files": [
     "src",

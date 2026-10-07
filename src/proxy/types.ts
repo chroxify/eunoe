@@ -50,6 +50,12 @@ export interface Estimator {
 
 export type Usage = Record<string, number>
 
+export interface SeenSession {
+  lastSeen: string
+  mode: Config["mode"]
+  cwd?: string
+}
+
 export interface Health {
   ok: boolean
   version: string

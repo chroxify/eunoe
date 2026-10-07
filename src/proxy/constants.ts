@@ -17,3 +17,7 @@ export const MODEL_LOOKUP_TIMEOUT_MS = 5_000
 export const MAX_EVENT_BUFFER = 4_000_000
 export const LOGGED_ERROR_CHARS = 500
 export const IDLE_TIMEOUT_SECONDS = 255
+
+export const SESSION_SEEN_INTERVAL_MS = 30_000
+export const SESSION_HEAD_BYTES = 65_536
+export const SESSIONS_KEPT = 200

@@ -1,5 +1,5 @@
 import path from "node:path"
-import { claudeConfigDirs, loadConfig } from "../config"
+import { claudeConfigDirs, loadConfig, modeFor } from "../config"
 import type { Config } from "../config/types"
 import type { Body } from "../context/types"
 import { findSessionFile } from "../transcript/locate"
@@ -9,6 +9,7 @@ import { HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_H
 import { sizeOf } from "./estimate"
 import { logRequest } from "./log"
 import { rewrite } from "./rewrite"
+import { recordSession } from "./sessions"
 import { loadState, saveState } from "./state"
 import type { Health, Note } from "./types"
 import { inputTokens, watchUsage } from "./usage"
@@ -31,11 +32,14 @@ function forwardableHeaders(headers: Headers) {
   return out
 }
 
-async function prepare(request: Request, body: Body, config: Config, isCountTokens: boolean) {
+async function prepare(request: Request, body: Body, base: Config, isCountTokens: boolean) {
   const sessionId = sessionIdOf(request.headers, body)
+  const config = { ...base, mode: modeFor(base, sessionId) }
   const trusted = config.eval?.trustHeaders === true
   const transcriptOverride = trusted ? request.headers.get(TRANSCRIPT_HEADER) : null
   const sessionFile = transcriptOverride ?? (sessionId ? findSessionFile(sessionId, claudeConfigDirs(config)) : null)
+  if (sessionId && !trusted) recordSession(sessionId, config.mode, sessionFile)
+  if (config.mode === "off") return rewrite({ body, sessionId, config, transcript: null, window: null, mayCompact: false })
   const transcript = sessionFile && sessionId
     ? prepareTranscript(config.search, sessionFile, transcriptOverride ? path.basename(transcriptOverride, ".jsonl") : sessionId)
     : null

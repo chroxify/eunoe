@@ -1,25 +1,27 @@
-import { claudeConfigDirs, loadConfig, saveConfig } from "../../config"
+import { claudeConfigDirs, loadConfig } from "../../config"
 import { editSettings, withoutEunoe } from "../claude-settings"
+import * as launchd from "../launchd"
 import type { Command } from "../types"
-import { c, line, listFiles, note, ok } from "../ui"
+import { c, line, listFiles, note, ok, warn } from "../ui"
 
 export const uninstall: Command = {
-  summary: "Send new sessions straight to the API again",
+  summary: "Disable eunoe and remove the background proxy",
   usage: "eunoe uninstall",
   details: [
-    "Removes eunoe from Claude Code's settings and hands compaction back to it.",
-    "The proxy keeps running as a passthrough, so sessions already pointed at it",
-    "keep working. Run `eunoe stop` once they have been restarted.",
+    "Everything `disable` does, then stops the proxy and removes its background service.",
+    "Sessions still running through eunoe lose their connection, so restart them first.",
+    "Your config and transcripts in ~/.eunoe are kept.",
   ],
   run() {
     const config = loadConfig()
     const touched = editSettings(claudeConfigDirs(config), (settings) => withoutEunoe(settings, config.port))
-    saveConfig({ mode: "off" })
     line()
     ok("Claude Code no longer routed through eunoe")
     listFiles(touched)
-    note("The proxy stays up as a passthrough for sessions still using it.")
-    line(`  ${c.dim("Once they're restarted:")} ${c.cyan("eunoe stop")}`)
+    if (launchd.removeAgent()) ok("Background proxy stopped and removed")
+    else note("No background proxy was installed.")
+    warn(`Restart any Claude Code session that was still using eunoe.`)
+    line(`  ${c.dim("Data kept in")} ~/.eunoe`)
     line()
   },
 }
