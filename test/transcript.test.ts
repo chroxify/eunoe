@@ -75,7 +75,7 @@ describe("rendering", () => {
 describe("config", () => {
   test("malformed fields fall back to defaults", () => {
     const config = normalizeConfig({ mode: "bogus", compactAt: 7, keepTurns: -1, search: "nope", claudeConfigDirs: "x" })
-    expect(config.mode).toBe("compact")
+    expect(config.mode).toBe("default")
     expect(config.compactAt).toBe(0.9)
     expect(config.keepTurns).toBe("all")
     expect(config.search).toBe("markdown")

@@ -7,13 +7,18 @@ import type { Config, Mode, SessionSettings, Tunable, Tunables } from "./types"
 const VALID: { [K in Tunable]: (value: unknown) => value is Tunables[K] } = {
   compactAt: (value): value is number => typeof value === "number" && value > 0 && value <= 1,
   keepTurns: (value): value is number | "all" => value === "all" || (Number.isInteger(value) && (value as number) >= 0),
+  keep: (value): value is number => Number.isInteger(value) && (value as number) >= 1,
+  budget: (value): value is number => Number.isInteger(value) && (value as number) >= 1_000,
   search: (value): value is Tunables["search"] => SEARCH_MODES.includes(value as Tunables["search"]),
+  rerank: (value): value is string => typeof value === "string" && /^[\w.-]+$/.test(value),
 }
+
+const TEXT_TUNABLES: Tunable[] = ["search", "rerank"]
 
 const isMode = (value: unknown): value is Mode => MODES.includes(value as Mode)
 
 export function parseTunable<K extends Tunable>(key: K, raw: string): Tunables[K] | null {
-  const value = key === "search" || raw === "all" ? raw : Number(raw)
+  const value = TEXT_TUNABLES.includes(key) || raw === "all" ? raw : Number(raw.replace(/[_,]/g, ""))
   return VALID[key](value) ? value as Tunables[K] : null
 }
 

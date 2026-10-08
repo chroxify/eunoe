@@ -2,6 +2,9 @@ export const HEALTH_PATH = "/_eunoe/health"
 export const SESSION_HEADER = "x-claude-code-session-id"
 export const TRANSCRIPT_HEADER = "x-eunoe-transcript"
 export const OMITTED_BEFORE_HEADER = "x-eunoe-omitted-before"
+export const CANONICAL_HEADER = "x-eunoe-canonical"
+export const WINDOW_HEADER = "x-eunoe-window"
+export const BILLING_LINE = /^x-anthropic-billing-header:[^\n]*/
 
 export const TARGET_SHARE = 0.3
 export const PROTECTED_OUTPUTS = 5

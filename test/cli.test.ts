@@ -12,7 +12,7 @@ describe("Claude settings edits", () => {
 
   test("off hands compaction back to Claude Code", () => {
     expect(withCompactionOwner({ autoCompactEnabled: false }, "off")).toEqual({})
-    expect(withCompactionOwner({}, "trim")).toEqual({ autoCompactEnabled: false })
+    expect(withCompactionOwner({}, "default")).toEqual({ autoCompactEnabled: false })
   })
 
   test("uninstall removes only what install added", () => {

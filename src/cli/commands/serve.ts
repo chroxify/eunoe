@@ -9,7 +9,7 @@ import { c, fail, line } from "../ui"
 export const serve: Command = {
   summary: "Run the proxy in the foreground",
   usage: "eunoe serve",
-  details: ["`eunoe enable` runs this for you in the background. Use it directly where there is no launchd."],
+  details: ["`eunoe start` runs this for you in the background. Use it directly where there is no launchd."],
   hidden: true,
   async run() {
     const config = loadConfig()

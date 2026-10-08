@@ -13,6 +13,12 @@
   },
   "include": [
     "src",
-    "test"
+    "test",
+    "bench"
+  ],
+  "exclude": [
+    "node_modules",
+    "bench/out",
+    "bench/tools/models"
   ]
 }

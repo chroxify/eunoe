@@ -1,3 +1,4 @@
+import { SUMMARY_ARGUMENT_CHARS, SUMMARY_COMMAND_CHARS } from "./constants"
 import type { Block, Message } from "./types"
 
 export function contentBlocks(content: unknown): Block[] {
@@ -21,4 +22,16 @@ export function clean(message: Message): Message {
 export function clip(value: unknown, max: number): string {
   const text = String(value).replace(/\s+/g, " ").trim()
   return text.length > max ? `${text.slice(0, max)}…` : text
+}
+
+export function describeToolCall(block: Block): string {
+  const input = block.input ?? {}
+  if (typeof input.command === "string") return `${block.name} \`${clip(input.command, SUMMARY_COMMAND_CHARS)}\``
+  if (typeof input.file_path === "string") return `${block.name} ${input.file_path}`
+  if (typeof input.pattern === "string") return `${block.name} "${clip(input.pattern, SUMMARY_ARGUMENT_CHARS)}"`
+  return `${block.name} ${clip(JSON.stringify(input), SUMMARY_ARGUMENT_CHARS)}`
+}
+
+export function resultText(block: Block): string {
+  return typeof block.content === "string" ? block.content : contentBlocks(block.content).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n")
 }

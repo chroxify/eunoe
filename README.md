@@ -6,8 +6,8 @@
 
 **Context management for Claude Code that never forgets what matters.**
 
-A local proxy that replaces Claude Code's context compaction. No summary call,
-no two-minute pause, no agent that wakes up having forgotten what you told it.
+A local proxy that manages Claude Code's context for it. No summary call, no
+two-minute pause, no agent that wakes up having forgotten what you told it.
 
 </div>
 
@@ -42,6 +42,28 @@ It also costs real time. A measured compaction at 922k tokens: **the full
 context read for the summary call, 2½ minutes of generation**, then a brand-new
 prefix written to cache anyway.
 
+## Results
+
+On 24 held-out sessions with 600 facts planted at known depths (values a
+command printed once, errors, instructions given then revised, decisions with
+their rejected options), scored by exact match with no judge:
+
+| | recall | instructions applied unprompted | context at the question | tokens per session |
+|---|---|---|---|---|
+| Claude Code's compaction | 70% | 92% | 70k | 741k |
+| no compaction at all (the ceiling) | 100% | 90% | 411k | 815k |
+| **eunoe** | **99%** | **95%** | **110k** | **305k** |
+
+**+29 points of recall over Claude Code's compaction** (95% CI +17 to +42),
+better on 12 sessions and worse on none, 0% wrong answers. The same +29 margin
+holds on 27 cut points taken from real sessions. It matches keeping the whole
+history at a quarter of the context.
+
+The method was chosen on a separate development split and frozen before the
+test split ran. The suites, the pre-registered specs, every per-arm table and
+the honest limits (one developer's repositories, one answering model, one run
+per arm) are in [`bench/`](bench/README.md).
+
 ## Install
 
 ```sh
@@ -56,52 +78,99 @@ Requires [Bun](https://bun.sh). `enable` sets up a launchd agent on macOS; on
 other platforms, keep `eunoe serve` running however you like (systemd, a
 terminal) and the rest works the same.
 
-## What it does instead
+## How it works
 
-Nothing, until the context is nearly full. Every request up to that point goes
-upstream byte for byte as Claude Code built it.
+Three parts, each measured on its own before it was kept.
 
-At the limit, eunoe rewrites the conversation once. Your first message stays.
-Every turn after it collapses to **what you asked and what the agent answered**.
-The turn in progress is kept whole, down to the last tool call.
+### Rolling: fold older turns a budget at a time
+
+The last 3 turns are always sent whole, down to the last tool call. Older
+turns stay whole too, until the detail in them (tool output, mostly) passes
+100k tokens. Then, in one step, every turn before those 3 folds to **what you
+asked, the evidence from that turn, and the agent's final reply**.
 
 ```
-WHAT CLAUDE CODE HOLDS (~900k)          WHAT eunoe SENDS
+WHAT CLAUDE CODE HOLDS                  WHAT eunoe SENDS AFTER A FOLD
 ──────────────────────────────          ────────────────────────────────────────
 turn 1   first message                  turn 1   first message, byte for byte
          + the agent's work + reply      ┌──────────────────────────────────────┐
 turn 2   prompt, 14 tool calls, reply    │ <context-compacted>                  │
 turn 3   prompt, 6 tool calls, reply     │ Tool calls before this point were    │
   ⋮                                      │ removed. Earlier turns follow as     │
-turn 38  prompt, 9 tool calls ✋          │ your message + the final reply.      │
+turn 38  prompt, 9 tool calls ✋          │ your message + evidence + reply.     │
          (you interrupted mid-work)      │ Instructions you gave still apply.   │
 turn 39  prompt, 3 tool calls, reply     │ Exact details → search the           │
-turn 40  prompt, 22 tool calls  ← LIMIT  │ transcript: <how>                    │
-                                         └──────────────────────────────────────┘
-                                        turn 2   your message → final reply
-                                        turn 3   your message → final reply
-                                          ⋮      every turn, ~580 tokens each
+turn 40  prompt, 22 tool calls           │ transcript: <how>                    │
+turn 41  prompt, 5 tool calls            └──────────────────────────────────────┘
+turn 42  prompt, 8 tool calls  ← LIVE   turn 2   your message → evidence → reply
+                                        turn 3   your message → evidence → reply
+                                          ⋮      every turn, ~700 tokens each
                                         turn 38  your message → [interrupted:
                                                  last words + its tool calls]
-                                        turn 39  your message → final reply
-                                        turn 40  your message + every tool call
-                                                 and result, exactly as it was
-                                        turn 41+ grows normally until the next cut
+                                        turn 39  your message → evidence → reply
+                                        turn 40  whole
+                                        turn 41  whole
+                                        turn 42  whole, exactly as it was
 ```
 
-**Every turn survives.** A message plus its final reply averages ~580 tokens, so
-a hundred turns is ~60k. There is no reason to throw them away. This is what
-keeps *"what did we do about the Stripe thing"* and *"you told me to deploy it
-yourself"* answerable after a cut.
+It is a step, not a slide, and that is what keeps the prompt cache alive. A
+cache is a prefix match: change something in the middle and everything after
+it is rewritten. Folding one turn per message would rewrite the cache every
+turn. Folding 100k at a time writes the folded prefix once, and every request
+until the next step reads it at a tenth of the price. The fold pays for itself
+within a few requests and frees the window on top.
+
+If the window still fills, a huge live turn say, the full cut kicks in as a
+backstop: everything folds, and under pressure the oldest folded turns go
+first, then the oldest tool outputs of the live turn.
+
+**Every turn survives.** A message plus evidence plus its final reply averages
+~700 tokens, so a hundred turns is ~70k. There is no reason to throw them away.
 
 **The first message is kept verbatim.** Claude Code packs `CLAUDE.md`, your git
 status, your identity and the skill list into it. Dropping it drops your
 instructions. Its hash also travels in a billing header, so eunoe never edits it.
 
-**The turn in progress is untouched.** The agent is mid-work: it needs the actual
-tool calls, their output and its own thinking blocks to carry on. If you
-interrupted it, the interruption marker is right there too, so it resumes from
-where it stopped rather than starting the turn over.
+**The turns in progress are untouched.** The agent is mid-work: it needs the
+actual tool calls, their output and its own thinking blocks to carry on. If you
+interrupted it, the interruption marker is right there too.
+
+### Evidence: the lines of tool output worth keeping
+
+When a turn folds, each command's output is scanned line by line and scored:
+error words and codes, values (ids, hashes, URLs, versions, durations, test and
+diff summaries, `key: value` lines), label words like *deployment* or *exit
+code*. Every call keeps its best lines, the highest scorers across the turn fill
+a 4k-character budget, and they are quoted verbatim under the call that
+produced them. The dump goes; the facts stay in the prompt.
+
+Commands whose output can simply be re-run (Read, Grep, Glob, Edit, Write) are
+skipped. Across 321 folded turns, patterns kept 97% of the planted values; every
+model-based picker tried (Haiku, Jev, two local 3B models) kept fewer.
+
+### Recall: the dropped output a message is about
+
+Once per message you send, before the agent responds, eunoe searches every tool
+output no longer in context, plus what the agent said while working, with your
+message as the query. Matching excerpts are quoted exactly and appended to your
+message, oldest first.
+
+```
+you      (turn 71)  deploy is failing with ERR_LEASE_6011 again
+eunoe    ─ appends ─  <recalled-context>
+                      [turn 12] Bash `bun run deploy:staging`:
+                          Deployment ID: dpl_qgthe6u4p7
+                          ERR_LEASE_6011: lease expired, retrying with --fresh
+                      </recalled-context>
+```
+
+Candidates come from BM25, the keyword ranking search engines use, in about
+6 ms with no model. Optionally a [Jev](https://typesafe.ai) call reorders the
+top 30 in about 300 ms: on the development split that lifted the right excerpt
+from 88% to 95% of questions, more than Haiku or Sonnet reranking, cross-encoders
+or six embedding models. Without a key, BM25 order is used and nothing else
+changes. The recall is computed once per message and pinned to it, so it never
+disturbs the cache.
 
 ## How it plugs in
 
@@ -122,19 +191,14 @@ on the wire. That untouched file is the transcript the agent gets pointed at.
 
 ## Modes
 
-| mode | before the limit | at the limit |
-|---|---|---|
-| **`compact`** (default) | everything, unchanged | the cut, above |
-| **`trim`** | every finished turn is already just your message + the final reply | rarely reached |
-| **`off`** | passthrough | Claude Code's own compaction |
-
-`trim` is the aggressive option: tool output leaves context the moment a turn
-ends, so a long session never grows past a few tens of thousands of tokens. It
-is noticeably cheaper and, in benchmarks, no less accurate — but the agent has
-to search its transcript more often, so turns start slower.
+| mode | what the model sees |
+|---|---|
+| **`default`** | the last 3 turns whole; older turns folded a budget at a time; evidence and recall on |
+| **`compact`** | everything, unchanged, until the window is nearly full, then one fold with evidence and recall; Claude Code as it is, with only the compaction replaced |
+| **`off`** | passthrough; Claude Code compacts on its own |
 
 ```sh
-eunoe mode compact   # or trim, or off
+eunoe mode compact   # or default, or off
 ```
 
 Whichever is on owns compaction: eunoe disables Claude Code's auto-compact while
@@ -150,18 +214,15 @@ on text with no tool call in it. Only the text is kept; thinking is dropped.
 
 Across 18,966 real turns:
 
-| how the turn ended | share | what eunoe keeps |
+| how the turn ended | share | what a folded turn keeps |
 |---|---|---|
 | on a text reply | 73% | that reply (median 1.9k chars; 57% name a file path) |
-| still running | 17% | nothing — it's the live turn, never reduced |
+| still running | 17% | nothing — it's a live turn, never folded |
 | interrupted or steered | 10% | last words + the list of tool calls |
 
 Only 1% of finished work turns end in a reply shorter than 120 characters.
 Agents already close turns with something usable; eunoe just stops throwing it
 away.
-
-In `trim` mode the system prompt tells the agent its final reply is the only
-thing it carries forward, and what belongs in it.
 
 ## Interruptions and steering
 
@@ -171,11 +232,11 @@ handled explicitly.
 | what happened | how eunoe treats it |
 |---|---|
 | **Esc mid-work**, then a new message | The interrupted turn ends there. Your new message, marker included, opens the next turn. |
-| **Typing while the agent works** | Claude Code sends a mid-conversation `system` message. It stays inside the running turn; in a reduced turn it is merged in right before the final reply. |
-| **A skill loads mid-turn** | Its instructions arrive next to tool output, inside the turn. When that turn is reduced they're kept, as is anything you typed while it ran, so the agent keeps following the skill. Stale system reminders are dropped. |
-| **An interrupted turn gets reduced** | No final reply exists, so eunoe writes one: `[This turn was interrupted before a final reply.] Last thing you said: … Tool calls (12): Edit src/app.ts; Bash \`bun test\`; …` |
-| **The cut lands on an interrupted turn** | Kept verbatim. The agent sees exactly where it stopped. |
-| **Esc-Esc rewind past the cut** | eunoe notices its cut turn is gone from the history and starts over from whatever Claude Code sends. |
+| **Typing while the agent works** | Claude Code sends a mid-conversation `system` message. It stays inside the running turn; in a folded turn it is merged in right before the final reply. |
+| **A skill loads mid-turn** | Its instructions arrive next to tool output, inside the turn. When that turn folds they're kept, as is anything you typed while it ran, so the agent keeps following the skill. Stale system reminders are dropped. |
+| **An interrupted turn gets folded** | No final reply exists, so eunoe writes one: `[This turn was interrupted before a final reply.] Last thing you said: … Tool calls (12): Edit src/app.ts; Bash \`bun test\`; …` |
+| **The fold lands on an interrupted turn** | Kept verbatim. The agent sees exactly where it stopped. |
+| **Esc-Esc rewind past the fold** | eunoe notices its fold point is gone from the history and starts over from whatever Claude Code sends. |
 
 ## Searching the transcript
 
@@ -190,79 +251,50 @@ Nothing is lost, so the agent is told where everything is and how to look.
 | `qmd` | The markdown folder indexed by [qmd](https://github.com/tobi/qmd) for semantic search, for when the agent doesn't know the exact words. |
 
 Rendering is fast and idempotent — a 199-turn session takes 0.13s — so it just
-runs again as the session grows. qmd's embedding pass takes ~83s and runs in the
-background; queries take 3–20s.
+runs again as the session grows. With evidence and recall on, the agent rarely
+needs to search: 0.1 lookups per session in the benchmark, against 10 for
+Claude Code's compaction.
 
 ## Prompt caching
 
 A compaction scheme that breaks the cache costs more than it saves. Cache writes
-are 1.25× the input price and reads are 0.05×, so rewriting a cached prefix is
-25× more expensive than reading it.
+are 1.25× the input price and reads are 0.1×, so rewriting a cached prefix is
+12× more expensive than reading it.
 
 eunoe's output is deterministic. The same history always produces the same bytes,
-a reduced turn always reduces identically, and nothing time-based is ever
-inserted. The prefix changes only at a cut.
+a folded turn always folds identically, recall is pinned to the message it was
+computed for, and nothing time-based is ever inserted. The prefix changes only at
+a fold.
 
 ```
 turns 1–39   byte-identical to no proxy at all   → cache hits as usual
-turn 40      CUT: one new prefix, written once   → one cache write
-turns 41+    same prefix + new turns appended    → reads hit again
+turn 40      FOLD: one new prefix, written once  → one cache write
+turns 41–78  same prefix + new turns appended    → reads hit again
+turn 79      next fold
 ```
 
-Measured through the proxy, right after a cut: **180k tokens read from cache,
+Measured through the proxy, right after a fold: **180k tokens read from cache,
 1.5k written.** Claude Code's own compaction instead reads the entire ~900k
 context into a summary call and *then* writes a new prefix.
 
 ## Edge cases
 
-The interesting ones are all about what happens when the cut itself doesn't fit.
+The interesting ones are all about what happens when a cut itself doesn't fit.
 
 | case | behaviour |
 |---|---|
 | **Where a cut lands** | It aims for 30% of the room available — the window minus the fixed system prompt and tool definitions. Land at 70% and you compact again two turns later. |
-| **The cut doesn't fit** | Shrink in order, stopping as soon as it fits. **1.** Drop reduced turns, oldest first. **2.** Only then clear the *oldest* tool outputs of the live turn, half of what remains per step, shortening oversized inputs too. |
+| **The cut doesn't fit** | Shrink in order, stopping as soon as it fits. **1.** Drop folded turns, oldest first. **2.** Only then clear the *oldest* tool outputs of the live turn, half of what remains per step, shortening oversized inputs too. |
 | **Never removed from the live turn** | Your message, the agent's own text, every tool call, and the **latest 5 tool outputs** — what it is actually working from. |
-| **Compaction loops** | Impossible by construction. A cut only ever moves to a newer turn, every shrink step only removes more, and each step is persisted so the bytes stay cache-stable. |
+| **Compaction loops** | Impossible by construction. A fold only ever moves to a newer turn, every shrink step only removes more, and each step is persisted so the bytes stay cache-stable. |
 | **Nothing left to remove** | Sends anyway and logs `stuck`. |
-| **Context window** | Asked once per model via the Models API (`max_input_tokens`) and cached in `~/.eunoe/models.json`. If the lookup fails the window is unknown and **eunoe does not compact** — it won't cut against a limit it can't verify. |
+| **Context window** | Asked once per model via the Models API (`max_input_tokens`) and cached in `~/.eunoe/models.json`. If the lookup fails the window is unknown and **eunoe does not cut** — it won't cut against a limit it can't verify. Budget folds still happen; they depend only on the budget. |
 | **Images and PDFs** | Counted at ~1.6k tokens each, not at their base64 length. |
-| **Subagents, titles, side calls** | Each conversation is its own thread (session id + a fingerprint of its first turn) with its own cut. |
+| **Subagents, titles, side calls** | Each conversation is its own thread (session id + a fingerprint of its first turn) with its own fold point. |
 | **Mid-conversation system messages** | Never dropped. The API only accepts them directly before an assistant message, so they are merged into that position. |
-| **Thinking blocks** | Kept with their signatures in the live turn, where tool use requires them. Dropped from reduced turns. |
+| **Thinking blocks** | Kept with their signatures in live turns, where tool use requires them. Dropped from folded turns. |
+| **Jev unreachable** | Any error or more than 4 seconds and the recall uses BM25 order. The agent never waits on it. |
 | **eunoe is down** | Every Claude request fails. launchd keeps it alive; `disable` leaves it running so sessions already pointed at it survive, and `uninstall` removes it once they're restarted. |
-
-## Early results
-
-A full, pre-registered benchmark is in progress and will be published with its
-harness, raw data and every per-point result. Until then, here is what an
-earlier internal run showed, with its limits stated.
-
-**Setup.** 45 cut points across 14 projects, from one developer's real Claude
-Code history: real auto-compactions, plus long sessions cut where they crossed
-350k tokens. At each point, every strategy answered the same 10 questions about
-the session — recent details, what was worked on 5–15 turns earlier, standing
-instructions, decisions, and what was in progress — through a real Claude Code
-session, with read-only access to a transcript that stopped at the cut. Answers
-were judged blind.
-
-| strategy | score | context after the cut | vs native, 95% CI |
-|---|---|---|---|
-| Claude Code's compaction | 84% | 82k | — |
-| **eunoe** | **95%** | 183k | **+11.0%** [+8.1, +13.9] |
-| eunoe, `trim` mode | 95% | 179k | +11.6% [+8.8, +14.4] |
-| eunoe, last 5 turns only | 90% | 164k | +6.4% [+2.4, +10.1] |
-| no compaction at all (ceiling) | 97% | 348k | — (7 points) |
-
-eunoe came within two points of never compacting at all, at about half the
-context. Claude Code's compaction lost most on what was worked on mid-session
-(74%), decisions (77%) and what was in progress (77%).
-
-**What this does not show yet.** The run had no budget-matched baseline — a plain
-sliding window given the same token budget — so it can't separate "eunoe keeps
-the right things" from "eunoe keeps more". It also used one judge, and many of its
-questions were easy enough that every strategy passed them. The full benchmark
-adds that baseline, a second judge, harder questions vetted before scoring, and a
-task-continuation test, and reports whatever it finds.
 
 ## Usage
 
@@ -271,10 +303,10 @@ eunoe enable             # route Claude Code through eunoe (sets up the proxy th
 eunoe enable --session 1baada86   # or manage only the sessions you name
 eunoe disable            # new sessions bypass eunoe; running ones keep working
 eunoe disable --session 1baada86  # stop managing one session from its next request
-eunoe mode trim --session 1baada86  # a different mode for one session
-eunoe mode compact       # off | trim | compact
-eunoe set compactAt 0.8 --session 1baada86  # any setting, for one session or all
-eunoe status             # what's running, plus cache stats for recent requests
+eunoe mode compact       # default | compact | off
+eunoe mode compact --session 1baada86  # a different mode for one session
+eunoe set budget 200000  # any setting, for every session or one (--session <id>)
+eunoe status             # what's running, recent sessions, cache stats
 eunoe uninstall          # disable and remove the background proxy
 eunoe serve              # run the proxy in the foreground (no launchd)
 ```
@@ -285,24 +317,22 @@ ones it has seen with their working directory. A unique prefix is enough. With
 you can switch any of them on later without a restart, and Claude Code keeps its
 own auto-compact as a backstop for them.
 
-Everything can be set per session: the mode, and `compactAt`, `keepTurns` and
-`search` through `eunoe set <key> <value> --session <id>`. Without `--session`
-it changes the default for every session; `eunoe set` alone lists the defaults
-and each session's own values, and `default` as the value drops a session's
-own. Changes apply from the session's next request.
+Everything can be set per session with `eunoe set <key> <value> --session <id>`.
+Without `--session` it changes the default for every session; `eunoe set` alone
+lists the defaults and each session's own values, and `default` as the value
+drops a session's own. Changes apply from the session's next request.
 
-`~/.eunoe/config.json`:
+| key | default | what it does |
+|---|---|---|
+| `keep` | `3` | turns kept whole at the end, in `default` mode |
+| `budget` | `100000` | tokens of older detail that trigger a fold |
+| `compactAt` | `0.9` | share of the context window that triggers the full cut |
+| `keepTurns` | `all` | folded turns kept after a full cut |
+| `search` | `markdown` | how transcripts are written for the agent to search |
+| `rerank` | `jev-preview` | Typesafe model that reorders recall, or `off` |
 
-```json
-{
-  "mode": "compact",
-  "compactAt": 0.9,
-  "keepTurns": "all",
-  "search": "markdown",
-  "port": 8788,
-  "claudeConfigDirs": []
-}
-```
+`~/.eunoe/config.json` holds the same keys, plus `port`, `claudeConfigDirs` and
+`sessions`.
 
 Tools that run Claude Code with their own config directory (one per account,
 say) need eunoe to know about it, both to find their transcripts and to route
@@ -317,6 +347,12 @@ The directory is remembered in `claudeConfigDirs`.
 `compactAt` is a share of the model's real context window. Claude Code compacts
 around 93%, so eunoe goes slightly earlier at 90% to win the race.
 
+### Jev
+
+Recall works without it. To turn the reranker on, put a [Typesafe](https://typesafe.ai)
+API key in `~/.eunoe/typesafe-key` or `TYPESAFE_API_KEY`; `eunoe status` shows
+whether it is active. `eunoe set rerank off` disables it.
+
 Every request is logged to `~/.eunoe/requests.jsonl` with what eunoe did to it
 and the cache read/write that came back.
 
@@ -329,16 +365,18 @@ and the cache read/write that came back.
   Anthropic API clients pass through unchanged but get nothing out of it.
 - **It can't recover what Claude Code already compacted.** Turn it on before a
   long session, not after.
-- **`trim` mode changes how the agent should write.** It's told to put state in
-  its final reply, and it mostly does — but a sloppy final reply costs more in
-  `trim` than in `compact`.
+- **Recall is keyword search.** Ask about "the deploy that failed" and it finds
+  the deploy output; ask about "that thing from before" and it finds nothing,
+  and the agent has to search the transcript itself. The reranker narrows this
+  but doesn't remove it.
 
 ## Prior art
 
 Claude Code's own compaction is the thing being replaced, and the summary format
 it produces is a reasonable piece of prompt engineering — it just runs after the
 conversation is already gone. [qmd](https://github.com/tobi/qmd) does the local
-semantic search for the `qmd` mode.
+semantic search for the `qmd` mode. [Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev)
+is Typesafe's system-one model, used here as a reranker.
 
 ## License
 

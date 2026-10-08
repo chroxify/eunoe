@@ -22,7 +22,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
     resetCut(state)
     stateChanged = true
   }
-  const rolling = config.eval?.rolling
+  const rolling = config.eval?.rolling ?? (config.mode === "default" ? { keep: config.keep, budget: config.budget } : undefined)
   if (cutIndex <= 0 && config.eval?.forceCut && turns.length >= 3) {
     const forced = settledCut(turns, Math.max(1, turns.length - 1 - (rolling?.keep ?? 1)))
     cutIndex = forced
@@ -33,7 +33,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
   const configuredKeep = config.keepTurns === "all" ? Number.MAX_SAFE_INTEGER : config.keepTurns
   const liveLength = () => turns.slice(Math.max(cutIndex, 0)).flat().length
   const compacted = () => cutIndex > 0
-    ? compactMessages(body.messages, cutIndex, { keepTurns: state.keep ?? configuredKeep, guide, omittedBefore })
+    ? compactMessages(body.messages, cutIndex, { keepTurns: state.keep ?? configuredKeep, guide, omittedBefore, evidence: config.eval?.evidence ?? true })
     : body.messages
   const build = () => {
     const messages = compacted()

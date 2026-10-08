@@ -4,13 +4,13 @@ import { sessionArgs, shortId } from "../sessions"
 import type { Command } from "../types"
 import { line, listFiles, note, ok } from "../ui"
 
-export const disable: Command = {
+export const stop: Command = {
   summary: "Send new sessions straight to the API again",
-  usage: "eunoe disable [--session <id>]",
+  usage: "eunoe stop [--session <id>]",
   details: [
     "Removes eunoe from Claude Code's settings and hands compaction back to it.",
     "The proxy stays up for sessions that are already running through it, so they",
-    "keep working until you restart them. `eunoe enable` turns it back on.",
+    "keep working until you restart them. `eunoe start` turns it back on.",
     "",
     "With --session, only that session is passed through untouched from its next request.",
   ],

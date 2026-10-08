@@ -15,7 +15,7 @@ describe("passthrough", () => {
     expect(run(b, { mode: "off" }).body).toBe(b)
     expect(rewrite({ body: b, sessionId: null, config: config(), transcript, window: 100_000, mayCompact: true }).body).toBe(b)
     const side = { ...b, tools: [] }
-    expect(run(side, { mode: "trim" }).body).toBe(side)
+    expect(run(side, { eval: { strategy: "trim" } }).body).toBe(side)
   })
 })
 
@@ -45,7 +45,7 @@ describe("compact", () => {
 
   test("a 325k request on a 1M model is nowhere near the limit (live regression)", () => {
     const b = body(session(14, 80_000))
-    const out = run(b, {}, 1_000_000)
+    const out = run(b, { mode: "compact" }, 1_000_000)
     expect(out.body).toBe(b)
     expect(out.note.compacted).toBe(false)
   })
@@ -98,7 +98,7 @@ describe("compaction under pressure", () => {
 
 describe("trim", () => {
   test("reduces finished turns and tells the agent where its transcript is", () => {
-    const out = run(body(session(5, 3_000)), { mode: "trim" })
+    const out = run(body(session(5, 3_000)), { eval: { strategy: "trim" } })
     expect(text(out.body)).not.toContain("step a1")
     expect(text(out.body)).toContain("step z")
     expect(JSON.stringify(out.body.system)).toContain("/t.jsonl")
@@ -127,8 +127,8 @@ describe("evaluation strategies", () => {
   })
 })
 
-describe("rolling", () => {
-  const rolling = { eval: { rolling: { keep: 2, budget: 5_000 } } }
+describe("default", () => {
+  const rolling = { keep: 2, budget: 5_000 }
 
   test("past the budget, every turn but the last few shrinks while those stay whole", () => {
     const out = run(body(session(10, 3_000)), rolling, 1_000_000)
@@ -161,5 +161,23 @@ describe("rolling", () => {
   test("under the budget nothing moves", () => {
     const b = body(session(3))
     expect(run(b, rolling, 1_000_000).body).toBe(b)
+  })
+
+  test("is the default, with evidence kept in folded turns and recall attached to the prompt", () => {
+    const deploy: Body["messages"] = [
+      user("deploy it"),
+      { role: "assistant", content: [{ type: "tool_use", id: "d", name: "Bash", input: { command: "bun run deploy" } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "d", content: "Uploading\nDeployment ID: dpl_qgthe6u4p7\ndone" }] },
+      reply("deployed"),
+    ]
+    const history = [...session(6, 3_000).slice(0, -3), ...deploy, ...session(4, 3_000).slice(2, -3), user("what deployment id did the deploy print?"), call("z"), result("z")]
+    const out = run(body(history), rolling, 1_000_000)
+    const sent = text(out.body)
+    expect(config().mode).toBe("default")
+    expect(out.note.actions).toEqual(["roll"])
+    expect(sent).toContain("<tool-evidence>")
+    expect(sent).toContain("<recalled-context>")
+    expect(sent.split("dpl_qgthe6u4p7").length).toBe(3)
+    expect(text(run(body(history), { ...rolling, eval: { evidence: false, recall: false } }, 1_000_000).body)).not.toContain("dpl_qgthe6u4p7")
   })
 })

@@ -5,10 +5,10 @@ import type { Command } from "../types"
 import { c, line, listFiles, note, ok, warn } from "../ui"
 
 export const uninstall: Command = {
-  summary: "Disable eunoe and remove the background proxy",
+  summary: "Stop eunoe and remove the background proxy",
   usage: "eunoe uninstall",
   details: [
-    "Everything `disable` does, then stops the proxy and removes its background service.",
+    "Everything `stop` does, then shuts the proxy down and removes its background service.",
     "Sessions still running through eunoe lose their connection, so restart them first.",
     "Your config and transcripts in ~/.eunoe are kept.",
   ],

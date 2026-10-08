@@ -94,7 +94,7 @@ describe("per-session scope", () => {
     const managed = freshSession()
     const other = freshSession()
     const previous = readFileSync(paths.config, "utf8")
-    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "trim", scope: "sessions", sessions: { [managed]: {} } }))
+    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "default", scope: "sessions", sessions: { [managed]: {} }, eval: { strategy: "trim" } }))
     try {
       const messages = session(3)
       await (await post(messages, { "x-claude-code-session-id": other })).text()
@@ -103,7 +103,7 @@ describe("per-session scope", () => {
       expect(JSON.parse(lastTo("/v1/messages").body).messages.length).toBeLessThan(messages.length)
       const seen = JSON.parse(readFileSync(paths.sessions, "utf8"))
       expect(seen[other].mode).toBe("off")
-      expect(seen[managed].mode).toBe("trim")
+      expect(seen[managed].mode).toBe("default")
     } finally {
       writeFileSync(paths.config, previous)
     }
@@ -147,3 +147,30 @@ describe("evaluation logging", () => {
   })
 })
 
+
+describe("canonical context", () => {
+  test("the first request captures system and tools; later ones are replaced, keeping their own billing line", async () => {
+    const previous = readFileSync(paths.config, "utf8")
+    writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "off", eval: { trustHeaders: true } }))
+    const file = `${paths.threads}/canonical-${freshSession()}.json`
+    const send = (system: string, tool: string) => handle(new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-eunoe-canonical": file, "x-claude-code-session-id": freshSession() },
+      body: JSON.stringify({ model: "claude-test", system: [{ type: "text", text: `x-anthropic-billing-header: ${system}\nYou are an agent` }], tools: [{ name: "Bash", description: tool }], messages: session(1) }),
+    }))
+    try {
+      await (await send("v=1", "runs commands")).text()
+      await (await send("v=2", "runs commands, differently")).text()
+      const sent = JSON.parse(lastTo("/v1/messages").body)
+      expect(sent.tools).toEqual([{ name: "Bash", description: "runs commands" }])
+      expect(sent.system[0].text).toBe("x-anthropic-billing-header: v=2\nYou are an agent")
+      await Bun.sleep(50)
+      const entries = logged().slice(-2)
+      expect(entries.map((e) => e.canonical)).toEqual(["captured", "applied"])
+      expect(entries[1].context.given.tools).not.toBe(entries[0].context.given.tools)
+      expect(entries[1].context.tools).toBe(entries[0].context.tools)
+    } finally {
+      writeFileSync(paths.config, previous)
+    }
+  })
+})

@@ -53,6 +53,21 @@ export function rows(entries: Array<[string, string]>, indent = 2) {
   for (const [label, value] of entries) console.log(`${" ".repeat(indent)}${c.dim(label.padEnd(width))}  ${value}`)
 }
 
+const visible = (text: string) => text.replace(/\x1b\[[0-9;]*m/g, "")
+
+export function table(entries: string[][], indent = 4, gap = 2) {
+  const columns = Math.max(...entries.map((row) => row.length))
+  const widths = Array.from({ length: columns }, (_, column) => Math.max(...entries.map((row) => visible(row[column] ?? "").length)))
+  for (const row of entries) {
+    const cells = widths.map((width, column) => (row[column] ?? "") + " ".repeat(Math.max(0, width - visible(row[column] ?? "").length)))
+    console.log(`${" ".repeat(indent)}${cells.join(" ".repeat(gap)).trimEnd()}`)
+  }
+}
+
+export function percent(share: number) {
+  return `${Math.round(share * 100)}%`
+}
+
 export function tilde(file: string) {
   const home = homedir()
   return file.startsWith(home) ? `~${file.slice(home.length)}` : file

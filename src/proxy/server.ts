@@ -5,11 +5,12 @@ import type { Body } from "../context/types"
 import { findSessionFile } from "../transcript/locate"
 import { prepareTranscript } from "../transcript/search"
 import { VERSION } from "../version"
-import { HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, SESSION_HEADER, TRANSCRIPT_HEADER } from "./constants"
+import { CANONICAL_HEADER, HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, SESSION_HEADER, TRANSCRIPT_HEADER, WINDOW_HEADER } from "./constants"
+import { applyCanonical } from "./canonical"
 import { sizeOf } from "./estimate"
 import { contextFingerprint } from "./fingerprint"
 import { logRequest } from "./log"
-import { rewrite } from "./rewrite"
+import { rewriteAsync } from "./rewrite"
 import { recordSession } from "./sessions"
 import { loadState, saveState } from "./state"
 import type { ContextFingerprint, Health, Note } from "./types"
@@ -40,13 +41,14 @@ async function prepare(request: Request, body: Body, base: Config, isCountTokens
   const transcriptOverride = trusted ? request.headers.get(TRANSCRIPT_HEADER) : null
   const sessionFile = transcriptOverride ?? (sessionId ? findSessionFile(sessionId, claudeConfigDirs(config)) : null)
   if (sessionId && !trusted) recordSession(sessionId, config.mode, sessionFile)
-  if (config.mode === "off") return rewrite({ body, sessionId, config, transcript: null, window: null, mayCompact: false })
+  if (config.mode === "off") return rewriteAsync({ body, sessionId, config, transcript: null, window: null, mayCompact: false })
   const transcript = sessionFile && sessionId
     ? prepareTranscript(config.search, sessionFile, transcriptOverride ? path.basename(transcriptOverride, ".jsonl") : sessionId)
     : null
-  const needsWindow = config.mode === "compact" || config.eval?.strategy === "tail"
-  const window = config.window ?? (needsWindow ? await resolveWindow(body.model, request.headers, config.upstream) : null)
-  return rewrite({
+  const needsWindow = !config.eval?.strategy || config.eval.strategy === "tail"
+  const windowOverride = trusted ? Number(request.headers.get(WINDOW_HEADER)) || null : null
+  const window = windowOverride ?? config.window ?? (needsWindow ? await resolveWindow(body.model, request.headers, config.upstream) : null)
+  return rewriteAsync({
     body,
     sessionId,
     config,
@@ -72,17 +74,22 @@ export async function handle(request: Request): Promise<Response> {
   let note: Note = { action: "pass" }
   let threadKey: string | null = null
   let sentSize = 0
+  let givenSize = 0
   let sent: (ContextFingerprint & { session: string | null }) | null = null
 
   if (bodyText && isMessages) {
     try {
-      const body = JSON.parse(bodyText) as Body
+      const given = JSON.parse(bodyText) as Body
+      const canonicalFile = config.eval?.trustHeaders ? request.headers.get(CANONICAL_HEADER) : null
+      const canonical = canonicalFile ? applyCanonical(given, canonicalFile) : null
+      const body = canonical?.body ?? given
       const result = await prepare(request, body, config, isCountTokens)
-      note = result.note
+      note = canonical ? { ...result.note, canonical: canonical.status } : result.note
       threadKey = result.threadKey
-      if (result.body !== body) bodyText = JSON.stringify(result.body)
+      if (result.body !== given) bodyText = JSON.stringify(result.body)
       sentSize = sizeOf(result.body)
-      if (config.eval) sent = { session: sessionIdOf(request.headers, body), ...contextFingerprint(result.body) }
+      givenSize = result.body === given ? sentSize : sizeOf(given)
+      if (config.eval) sent = { session: sessionIdOf(request.headers, given), ...contextFingerprint(result.body), given: contextFingerprint(given) }
     } catch (error) {
       note = { action: "error-passthrough", error: String(error) }
     }
@@ -113,6 +120,8 @@ export async function handle(request: Request): Promise<Response> {
       cacheRead: usage.cache_read_input_tokens ?? 0,
       cacheWrite: usage.cache_creation_input_tokens ?? 0,
       uncached: usage.input_tokens ?? 0,
+      charsIn: givenSize,
+      charsOut: sentSize,
       ...(sent && { context: sent }),
     })
     if (threadKey && input > 0 && sentSize > 0) {

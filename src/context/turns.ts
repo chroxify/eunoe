@@ -1,6 +1,7 @@
-import { REMINDER_ONLY, SUMMARY_ARGUMENT_CHARS, SUMMARY_CALLS_SHOWN, SUMMARY_COMMAND_CHARS, SUMMARY_LAST_WORDS_CHARS } from "./constants"
-import { blocks, clean, clip, withoutCacheControl } from "./content"
-import type { Block, Message } from "./types"
+import { REMINDER_ONLY, SUMMARY_CALLS_SHOWN, SUMMARY_LAST_WORDS_CHARS } from "./constants"
+import { blocks, clean, describeToolCall, withoutCacheControl } from "./content"
+import { turnEvidence } from "./evidence"
+import type { Block, Message, ReduceOptions } from "./types"
 
 export function isPrompt(message: Message) {
   if (message.role !== "user") return false
@@ -43,14 +44,6 @@ function mergedHarness(turn: Message[]): Message[] {
   return content.length > 0 ? [{ role: "system", content }] : []
 }
 
-function describeToolCall(block: Block): string {
-  const input = block.input ?? {}
-  if (typeof input.command === "string") return `${block.name} \`${clip(input.command, SUMMARY_COMMAND_CHARS)}\``
-  if (typeof input.file_path === "string") return `${block.name} ${input.file_path}`
-  if (typeof input.pattern === "string") return `${block.name} "${clip(input.pattern, SUMMARY_ARGUMENT_CHARS)}"`
-  return `${block.name} ${clip(JSON.stringify(input), SUMMARY_ARGUMENT_CHARS)}`
-}
-
 function interruptedSummary(turn: Message[]): string {
   const assistant = turn.filter((m) => m.role === "assistant")
   const lastWords = [...assistant].reverse()
@@ -73,7 +66,7 @@ function carriedText(messages: Message[]): Block[] {
     .map((b) => ({ type: "text", text: b.text }))
 }
 
-export function reduceTurn(turn: Message[]): Message[] {
+export function reduceTurn(turn: Message[], options: ReduceOptions = {}): Message[] {
   const opening: Message[] = []
   let i = 0
   for (; i < turn.length && turn[i].role !== "assistant"; i += 1) {
@@ -81,6 +74,8 @@ export function reduceTurn(turn: Message[]): Message[] {
   }
   const carried = carriedText(turn.slice(i))
   if (carried.length > 0) opening.push({ role: "user", content: carried })
+  const evidence = options.evidence ? turnEvidence(turn) : null
+  if (evidence) opening.push({ role: "user", content: [{ type: "text", text: evidence }] })
   opening.push(...mergedHarness(turn))
   const last = [...turn].reverse().find((m) => m.role !== "system")!
   const content = last.role === "assistant" ? blocks(last) : []

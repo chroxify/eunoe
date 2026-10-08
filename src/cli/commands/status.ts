@@ -1,5 +1,7 @@
 import path from "node:path"
 import { loadConfig, modeFor, overrides } from "../../config"
+import { paths, RERANK_OFF } from "../../config/constants"
+import { rerankKey } from "../../context/rerank"
 import { seenSessions } from "../../proxy/sessions"
 import { VERSION } from "../../version"
 import { proxyUrl } from "../claude-settings"
@@ -7,53 +9,70 @@ import { MODE_DESCRIPTIONS, SESSIONS_SHOWN } from "../constants"
 import { probe, recentRequests, routedDirs } from "../inspect"
 import * as launchd from "../launchd"
 import { shortId } from "../sessions"
+import { perSession, savedShare, totals, withinWindow } from "../stats"
 import type { Command } from "../types"
-import { ago, c, line, rows, tilde, tokens, warn } from "../ui"
+import { ago, c, line, percent, rows, table, tilde, tokens, warn } from "../ui"
+
+const dot = (on: boolean) => (on ? c.green("●") : c.red("○"))
 
 export const status: Command = {
-  summary: "Show what eunoe is doing",
+  summary: "Show what eunoe is doing and saving",
   usage: "eunoe status",
   async run() {
     const config = loadConfig()
     const health = await probe(config.port)
     const routed = routedDirs(config)
     const recent = recentRequests()
+    const today = withinWindow(recent)
+    const stats = perSession(recent)
+    const sum = totals(today)
 
     line()
     line(`  ${c.bold("eunoe")} ${c.dim(VERSION)}`)
     line()
+
+    const recall = config.rerank === RERANK_OFF ? "bm25" : rerankKey() ? `bm25 ${c.dim("→")} ${config.rerank}` : `bm25  ${c.dim(`(${config.rerank} needs a key in ${tilde(paths.typesafeKey)} or TYPESAFE_API_KEY)`)}`
     rows([
-      ["Proxy", health ? `${c.green("●")} running on ${c.cyan(proxyUrl(config.port))}` : `${c.red("○")} not running`],
-      ["Claude Code", routed.length ? `${c.green("●")} routed through eunoe` : `${c.dim("○")} not routed ${c.dim("(eunoe enable)")}`],
+      ["Proxy", health ? `${dot(true)} running on ${c.cyan(proxyUrl(config.port))}${launchd.isInstalled() ? c.dim("  launchd") : ""}` : `${dot(false)} not running ${c.dim("(eunoe start)")}`],
+      ["Claude Code", routed.length ? `${dot(true)} routed ${c.dim(routed.map((dir) => tilde(path.join(dir, "settings.json"))).join(", "))}` : `${c.dim("○")} not routed ${c.dim("(eunoe start)")}`],
       ["Mode", `${c.bold(config.mode)}  ${c.dim(MODE_DESCRIPTIONS[config.mode])}`],
-      ["Scope", config.scope === "all" ? "every session" : `only the sessions you enabled ${c.dim("(eunoe enable --session <id>)")}`],
-      ["Search", `${config.search} transcripts`],
-      ["Background", launchd.isInstalled() ? "launchd agent" : c.dim("none")],
+      ["Sessions", config.scope === "all" ? "all" : `only the ones you started it for ${c.dim("(eunoe start --session <id>)")}`],
+      ["Recall", recall],
     ])
-    for (const dir of routed) line(`  ${" ".repeat(13)}${c.dim(tilde(path.join(dir, "settings.json")))}`)
 
     const sessions = seenSessions().slice(0, SESSIONS_SHOWN)
     if (sessions.length) {
       line()
-      line(`  ${c.dim("Recent sessions")}`)
-      for (const [id, session] of sessions) {
+      line(`  ${c.dim("Sessions")}`)
+      table(sessions.map(([id, session]) => {
         const active = modeFor(config, id)
-        const label = active === "off" ? c.dim("off".padEnd(7)) : c.green(active.padEnd(7))
         const own = Object.entries(overrides(config.sessions[id])).map(([name, value]) => `${name} ${value}`).join(" · ")
-        line(`    ${c.cyan(shortId(id))}  ${label}  ${c.dim(ago(session.lastSeen).padEnd(8))}  ${session.cwd ? tilde(session.cwd) : ""}${own ? `  ${c.dim(own)}` : ""}`)
-      }
+        const stat = stats.get(id)
+        const saved = stat ? savedShare(stat.context, stat.plain) : null
+        return [
+          c.cyan(shortId(id)),
+          active === "off" ? c.dim("off") : c.green(active),
+          session.cwd ? tilde(session.cwd) : c.dim("–"),
+          stat?.turns ? c.dim(`${stat.turns} turns`) : "",
+          stat && active !== "off" ? `${c.bold(tokens(stat.context))} ctx` : "",
+          saved !== null && active !== "off" ? (saved > 0 ? c.green(`−${percent(saved)}`) : c.dim("±0")) : "",
+          c.dim(ago(session.lastSeen)),
+          own ? c.dim(own) : "",
+        ]
+      }))
     }
 
-    if (recent.length) {
-      const sum = (key: string) => recent.reduce((total, entry) => total + (entry[key] ?? 0), 0)
-      const compactions = recent.filter((entry) => entry.compacted)
+    if (sum.requests) {
+      const hit = sum.cacheRead + sum.cacheWrite + sum.uncached
       line()
-      line(`  ${c.dim(`Last ${recent.length} requests`)}`)
+      line(`  ${c.dim("Last 24h")}`)
       rows([
-        ["Cache", `${c.bold(tokens(sum("cacheRead")))} read  ·  ${tokens(sum("cacheWrite"))} written  ·  ${tokens(sum("uncached"))} uncached`],
-        ["Cuts", compactions.length ? `${compactions.length}, last ${ago(compactions.at(-1)!.ts)}` : c.dim("none yet")],
+        ["Requests", `${c.bold(String(sum.requests))}${sum.folds ? `  ${c.dim(`${sum.folds} fold${sum.folds === 1 ? "" : "s"}, last ${ago(sum.lastFold!)}`)}` : ""}`],
+        ["Cache", `${c.bold(tokens(sum.cacheRead))} read  ${c.dim("·")}  ${tokens(sum.cacheWrite)} written  ${c.dim("·")}  ${tokens(sum.uncached)} uncached${hit ? c.dim(`  (${percent(sum.cacheRead / hit)} hit)`) : ""}`],
+        ["Saved", sum.saved > 0 ? `${c.bold(c.green(tokens(sum.saved)))} input tokens not sent  ${c.dim(`(${percent(sum.saved / (sum.sent + sum.saved))} less than plain Claude Code)`)}` : c.dim("nothing folded yet")],
       ])
     }
+
     if (health && health.mode !== config.mode) {
       line()
       warn(`The running proxy reports mode ${health.mode}; it switches on its next request.`)

@@ -22,9 +22,9 @@ function scoped(config: Config, ids: string[]): Partial<Config> {
   return { scope: managingAll ? "all" : "sessions", sessions }
 }
 
-export const enable: Command = {
+export const start: Command = {
   summary: "Route Claude Code through eunoe",
-  usage: "eunoe enable [--session <id>] [--config-dir <dir>]",
+  usage: "eunoe start [--session <id>] [--config-dir <dir>]",
   details: [
     "Starts the background proxy if it isn't running (setting it up the first time)",
     "and points Claude Code at it through ANTHROPIC_BASE_URL in settings.json.",

@@ -7,6 +7,7 @@ export interface ThreadState {
   keep?: number
   cleared?: number
   ratio?: number
+  recalls?: Record<string, string>
 }
 
 export type Note = Record<string, unknown>
@@ -15,6 +16,17 @@ export interface ContextFingerprint {
   system: string
   tools: string
   skills: string[]
+  given?: ContextFingerprint
+}
+
+export interface Canonical {
+  system: Body["system"]
+  tools: Body["tools"]
+}
+
+export interface CanonicalResult {
+  body: Body
+  status: "applied" | "captured" | "skipped"
 }
 
 export interface RewriteInput {

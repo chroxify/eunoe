@@ -1,10 +1,23 @@
 import type { Command } from "../types"
-import { disable } from "./disable"
-import { enable } from "./enable"
 import { mode } from "./mode"
 import { serve } from "./serve"
-import { set } from "./set"
+import { settings } from "./settings"
+import { start } from "./start"
 import { status } from "./status"
+import { stop } from "./stop"
 import { uninstall } from "./uninstall"
 
-export const commands: Record<string, Command> = { enable, disable, mode, set, status, uninstall, serve }
+const alias = (target: Command, prefix: string[] = []): Command => ({ ...target, hidden: true, run: (args) => target.run([...prefix, ...args]) })
+
+export const commands: Record<string, Command> = {
+  start,
+  stop,
+  mode,
+  settings,
+  status,
+  uninstall,
+  serve,
+  enable: alias(start),
+  disable: alias(stop),
+  set: alias(settings, ["set"]),
+}

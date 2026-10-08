@@ -2,12 +2,12 @@ import { CLEARED_INPUT_KEPT, CLEARED_INPUT_THRESHOLD } from "./constants"
 import { blocks, withoutCacheControl } from "./content"
 import { compactionNotice, truncationNotice } from "./prompts"
 import { hasContent, isHarness, reduceTurn, splitTurns } from "./turns"
-import type { Block, Body, CompactOptions, Message } from "./types"
+import type { Block, Body, CompactOptions, Message, ReduceOptions } from "./types"
 
-export function trimMessages(messages: Message[]): Message[] {
+export function trimMessages(messages: Message[], options: ReduceOptions = {}): Message[] {
   const { preamble, turns } = splitTurns(messages)
   if (turns.length < 2) return messages
-  return [...preamble, ...turns.slice(0, -1).flatMap(reduceTurn), ...turns.at(-1)!]
+  return [...preamble, ...turns.slice(0, -1).flatMap((turn) => reduceTurn(turn, options)), ...turns.at(-1)!]
 }
 
 export function compactMessages(
@@ -28,7 +28,7 @@ export function compactMessages(
     ...preamble,
     turns[0][0],
     { role: "user", content: [{ type: "text", text: notice }, ...carried] },
-    ...turns.slice(keptFrom, cutIndex).flatMap(reduceTurn),
+    ...turns.slice(keptFrom, cutIndex).flatMap((turn) => reduceTurn(turn, options)),
     ...turns.slice(cutIndex).flat(),
   ]
 }

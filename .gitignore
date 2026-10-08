@@ -2,8 +2,8 @@ node_modules/
 .DS_Store
 *.log
 
-# The benchmark harness and its outputs are published with the results.
-bench/
+# Benchmark outputs hold raw session transcripts; publish from a reviewed copy.
+bench/out/
 
 # Local qmd search indexes.
 .qmd/
