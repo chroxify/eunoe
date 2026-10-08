@@ -1,5 +1,5 @@
 import { REMINDER_ONLY, SUMMARY_CALLS_SHOWN, SUMMARY_LAST_WORDS_CHARS } from "./constants"
-import { blocks, clean, describeToolCall, withoutCacheControl } from "./content"
+import { blocks, clean, describeToolCall, truncate, withoutCacheControl } from "./content"
 import { turnEvidence } from "./evidence"
 import type { Block, Message, ReduceOptions } from "./types"
 
@@ -53,7 +53,7 @@ function interruptedSummary(turn: Message[]): string {
   const shown = calls.slice(-SUMMARY_CALLS_SHOWN)
   return [
     "[This turn was interrupted before a final reply.]",
-    lastWords ? `Last thing you said: ${lastWords.length > SUMMARY_LAST_WORDS_CHARS ? `${lastWords.slice(0, SUMMARY_LAST_WORDS_CHARS)}…` : lastWords}` : "",
+    lastWords ? `Last thing you said: ${lastWords.length > SUMMARY_LAST_WORDS_CHARS ? `${truncate(lastWords, SUMMARY_LAST_WORDS_CHARS)}…` : lastWords}` : "",
     calls.length > 0 ? `Tool calls (${calls.length}${calls.length > shown.length ? `, last ${shown.length} shown` : ""}): ${shown.join("; ")}` : "",
     "Their output is in the full transcript.",
   ].filter(Boolean).join("\n")

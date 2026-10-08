@@ -138,3 +138,13 @@ test("system append moves the last cache breakpoint onto the new block", () => {
   const out = appendSystem([{ type: "text", text: "a" }, { type: "text", text: "b", cache_control: { type: "ephemeral" } }], "c")
   expect(out).toEqual([{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c", cache_control: { type: "ephemeral" } }])
 })
+
+describe("surrogate safety", () => {
+  test("clipping never leaves half an emoji, and the forwarded body is well-formed JSON", async () => {
+    const { clip, truncate, wellFormed } = await import("../src/context/content")
+    const text = `abc${"😀".repeat(200)}`
+    for (let max = 1; max < 12; max += 1) expect(JSON.stringify(clip(text, max))).not.toMatch(/\\ud83d(?!\\ude00)/i)
+    expect(truncate("ab😀", 3)).toBe("ab")
+    expect(JSON.stringify({ a: "x\ud83d", b: ["\ude00y"] }, wellFormed)).toBe('{"a":"x�","b":["�y"]}')
+  })
+})

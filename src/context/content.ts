@@ -19,9 +19,18 @@ export function clean(message: Message): Message {
   return { role: message.role, content: blocks(message).map(withoutCacheControl) }
 }
 
+export function truncate(text: string, max: number): string {
+  const cut = text.slice(0, max)
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut
+}
+
+export function wellFormed(_key: string, value: unknown): unknown {
+  return typeof value === "string" ? value.toWellFormed() : value
+}
+
 export function clip(value: unknown, max: number): string {
   const text = String(value).replace(/\s+/g, " ").trim()
-  return text.length > max ? `${text.slice(0, max)}…` : text
+  return text.length > max ? `${truncate(text, max)}…` : text
 }
 
 export function describeToolCall(block: Block): string {

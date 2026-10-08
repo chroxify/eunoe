@@ -1,6 +1,7 @@
 import path from "node:path"
 import { claudeConfigDirs, loadConfig, settingsFor } from "../config"
 import type { Config } from "../config/types"
+import { wellFormed } from "../context/content"
 import type { Body } from "../context/types"
 import { findSessionFile } from "../transcript/locate"
 import { prepareTranscript } from "../transcript/search"
@@ -86,7 +87,7 @@ export async function handle(request: Request): Promise<Response> {
       const result = await prepare(request, body, config, isCountTokens)
       note = canonical ? { ...result.note, canonical: canonical.status } : result.note
       threadKey = result.threadKey
-      if (result.body !== given) bodyText = JSON.stringify(result.body)
+      if (result.body !== given) bodyText = JSON.stringify(result.body, wellFormed)
       sentSize = sizeOf(result.body)
       givenSize = result.body === given ? sentSize : sizeOf(given)
       if (config.eval) sent = { session: sessionIdOf(request.headers, given), ...contextFingerprint(result.body), given: contextFingerprint(given) }

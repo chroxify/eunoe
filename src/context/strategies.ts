@@ -1,5 +1,5 @@
 import { CLEARED_INPUT_KEPT, CLEARED_INPUT_THRESHOLD } from "./constants"
-import { blocks, withoutCacheControl } from "./content"
+import { blocks, truncate, withoutCacheControl } from "./content"
 import { compactionNotice, truncationNotice } from "./prompts"
 import { hasContent, isHarness, reduceTurn, splitTurns } from "./turns"
 import type { Block, Body, CompactOptions, Message, ReduceOptions } from "./types"
@@ -73,7 +73,7 @@ export function clearToolResults(messages: Message[], from: number, count: numbe
 }
 
 function shortenInput(input: unknown): unknown {
-  if (typeof input === "string") return input.length > CLEARED_INPUT_THRESHOLD ? `${input.slice(0, CLEARED_INPUT_KEPT)}… [${input.length - CLEARED_INPUT_KEPT} chars cleared; in the transcript]` : input
+  if (typeof input === "string") return input.length > CLEARED_INPUT_THRESHOLD ? `${truncate(input, CLEARED_INPUT_KEPT)}… [${input.length - CLEARED_INPUT_KEPT} chars cleared; in the transcript]` : input
   if (Array.isArray(input)) return input.map(shortenInput)
   if (input && typeof input === "object") return Object.fromEntries(Object.entries(input).map(([k, v]) => [k, shortenInput(v)]))
   return input
