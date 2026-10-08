@@ -76,7 +76,7 @@ sessions, same answering model, same prompt, same scoring.
 Paired against native: both3 recall +29.2 [+17.2, +41.5], tasks +3.6
 [−1.2, +8.3], 12 sessions better / 0 worse. The tasks interval now clears
 the P4 bound (−5) that the frozen arm missed by 0.4; the other five
-hypotheses hold as before. both3 has 0% unknown and 0% wrong answers,
+hypotheses hold as before. both3 has 1 unknown and 3 wrong answers out of 600,
 matches `full` on every fact type and depth, and processes 38% fewer tokens
 than the frozen arm with no transcript lookups. The Jev call adds about
 0.3 s per user message and no measurable tokens.

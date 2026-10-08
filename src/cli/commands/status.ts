@@ -69,8 +69,8 @@ export const status: Command = {
       rows([
         ["Requests", `${c.bold(String(sum.requests))}${sum.folds ? `  ${c.dim(`${sum.folds} fold${sum.folds === 1 ? "" : "s"}, last ${ago(sum.lastFold!)}`)}` : ""}`],
         ["Cache", `${c.bold(tokens(sum.cacheRead))} read  ${c.dim("·")}  ${tokens(sum.cacheWrite)} written  ${c.dim("·")}  ${tokens(sum.uncached)} uncached${hit ? c.dim(`  (${percent(sum.cacheRead / hit)} hit)`) : ""}`],
-        ["Saved", sum.saved > 0 ? `${c.bold(c.green(tokens(sum.saved)))} input tokens not sent  ${c.dim(`(${percent(sum.saved / (sum.sent + sum.saved))} less than plain Claude Code)`)}` : c.dim("nothing folded yet")],
-      ])
+        ["Saved", sum.saved > 0 ? `${c.bold(c.green(tokens(sum.saved)))} input tokens not sent  ${c.dim(`(${percent(sum.saved / (sum.sent + sum.saved))} less than plain Claude Code)`)}` : c.dim("no data yet")],
+      ], 4)
     }
 
     if (health && health.mode !== config.mode) {

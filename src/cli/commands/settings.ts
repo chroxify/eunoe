@@ -58,7 +58,7 @@ async function pickSetting(ids: string[]) {
   const name = await select<Tunable>(ids.length ? `Setting for ${ids.map(shortId).join(", ")}` : "Setting", TUNABLES.map((value) => ({ value, hint: `${String(config[value]).padEnd(12)} ${TUNABLE_DESCRIPTIONS[value]}` })))
   if (name === null) return
   const current = ids.length === 1 ? config.sessions[ids[0]]?.[name] ?? config[name] : config[name]
-  const raw = await input(`${name}  ${c.dim(TUNABLE_HINTS[name])}`, String(current))
+  const raw = await input(`${name}  ${c.dim(TUNABLE_HINTS[name])}`, `${current}  (current)`)
   if (raw === null || raw === "") return
   applySetting(name, raw, ids)
 }

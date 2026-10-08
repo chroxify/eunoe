@@ -39,7 +39,7 @@ Held-out test split, 24 sessions, 600 facts (`results/planted-test.md`):
 | **rolling+both3 (both2 + Jev rerank)** | **99%** | **99%** | **95%** | **110k** | **305k** | **0.1** |
 
 rolling+both3 vs native: recall +29.2 [+17.2, +41.5], better on 12 sessions,
-worse on 0; instructions +3.6 [−1.2, +8.3]. 0% unknown, 0% wrong. All six
+worse on 0; instructions +3.6 [−1.2, +8.3]. 1 unknown and 3 wrong out of 600. All six
 pre-registered hypotheses pass for both3 (the frozen v1 missed P4 by 0.4).
 
 Dev split, 12 sessions: native 49%, rolling+both2 99%, rolling+both3 100%,
