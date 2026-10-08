@@ -11,10 +11,6 @@ nothing lost, no pause, no restart.
 
 </div>
 
-> At the top of Dante's Purgatory two rivers run from one spring. **Lethe**
-> washes away the memory of what weighed on you. **Eunoe** — *good mind* —
-> gives back the memory of the good. You drink from both. Lethe first.
-
 ---
 
 ## The problem
