@@ -53,6 +53,7 @@ export interface CompactInput {
   guide: string | null
   mayCompact: boolean
   omittedBefore?: number
+  decorate?: (messages: Message[]) => Message[]
 }
 
 export interface CompactResult {
@@ -79,4 +80,5 @@ export interface Health {
   version: string
   mode: Config["mode"]
   pid: number
+  startedAt?: number
 }

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
-import { DEFAULTS, EUNOE_DIR, MODES, paths, SCOPES, SEARCH_MODES, TUNABLES } from "./constants"
+import { DEFAULTS, EUNOE_DIR, MODES, paths, SCOPES, SEARCH_MODES, TEXT_TUNABLES, TUNABLES } from "./constants"
 import type { Config, Mode, SessionSettings, Tunable, Tunables } from "./types"
 
 const VALID: { [K in Tunable]: (value: unknown) => value is Tunables[K] } = {
@@ -12,8 +12,6 @@ const VALID: { [K in Tunable]: (value: unknown) => value is Tunables[K] } = {
   search: (value): value is Tunables["search"] => SEARCH_MODES.includes(value as Tunables["search"]),
   rerank: (value): value is string => typeof value === "string" && /^[\w.-]+$/.test(value),
 }
-
-const TEXT_TUNABLES: Tunable[] = ["search", "rerank"]
 
 const isMode = (value: unknown): value is Mode => MODES.includes(value as Mode)
 

@@ -21,6 +21,10 @@ beforeAll(() => {
       received.push({ path: url.pathname, body: await request.text(), headers: request.headers })
       if (url.pathname.startsWith("/v1/models/")) return Response.json({ id: url.pathname.split("/").pop(), max_input_tokens: 60_000 })
       if (url.pathname === "/v1/fail") return new Response('{"error":"nope"}', { status: 400 })
+      if (request.headers.get("x-test-dense")) {
+        const body = received.at(-1)!.body
+        if (body.length > 60_000) return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: `prompt is too long: ${body.length} tokens > 60000 maximum` } }), { status: 400 })
+      }
       if (request.headers.get("x-test-error")) return new Response('{"type":"error","error":{"type":"invalid_request_error"}}', { status: 400 })
       if (url.pathname === "/v1/messages") return new Response(sse, { headers: { "content-type": "text/event-stream" } })
       return new Response("ok")
@@ -44,6 +48,21 @@ const lastTo = (path: string) => [...received].reverse().find((r) => r.path === 
 const logged = () => (existsSync(paths.requests) ? readFileSync(paths.requests, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [])
 
 describe("proxy", () => {
+  test("when the API says the prompt is too long, eunoe learns the real size, cuts and sends again; Claude Code never sees the error", async () => {
+    const id = freshSession()
+    const before = received.length
+    const response = await post(session(20, 4_000), { "x-claude-code-session-id": id, "x-test-dense": "1" })
+    expect(response.status).toBe(200)
+    expect(await response.text()).toBe(sse)
+    const tries = received.slice(before).filter((r) => r.path === "/v1/messages")
+    expect(tries).toHaveLength(2)
+    expect(tries[1].body.length).toBeLessThan(60_000)
+    await Bun.sleep(50)
+    const healed = logged().filter((r) => String(r.thread).startsWith(id))
+    expect(healed.some((r) => r.overflow && r.status === 400)).toBe(true)
+    expect(healed.some((r) => r.healed && r.status === 200)).toBe(true)
+  })
+
   test("non-message requests are forwarded untouched", async () => {
     const response = await handle(new Request("http://127.0.0.1/v1/other?x=1"))
     expect(await response.text()).toBe("ok")

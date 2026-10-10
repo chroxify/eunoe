@@ -1,11 +1,8 @@
-// Captures what Claude Code sends as system prompt and tools for one point's
-// native copy and plain copy, without reaching the API: a dump server answers
-// every request with an error and keeps the body. No usage.
-//   bun bench/tools/fingerprint-debug.ts p01
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { BASE_SETTINGS, CONFIG_DIR } from "../lib/claude"
-import { OUT, choosePoints, repointSummary, shrinkUsage, writeCopy } from "../real/run"
+import { BASE_SETTINGS, CONFIG_DIR } from "../lib/constants"
+import { choosePoints, repointSummary, shrinkUsage, writeCopy } from "../real/run"
+import { OUT } from "../real/constants"
 
 const tag = process.argv[2] ?? "p01"
 const DUMP = path.join(OUT, "fingerprint-debug", tag)

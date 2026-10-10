@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import path from "node:path"
 import { loadConfig, modeFor, overrides } from "../../config"
 import { paths, RERANK_OFF } from "../../config/constants"
@@ -5,15 +6,34 @@ import { rerankKey } from "../../context/rerank"
 import { seenSessions } from "../../proxy/sessions"
 import { VERSION } from "../../version"
 import { proxyUrl } from "../claude-settings"
-import { MODE_DESCRIPTIONS, SESSIONS_SHOWN } from "../constants"
-import { probe, recentRequests, routedDirs } from "../inspect"
+import { BLOCKING_LIMIT_ENV, MODE_DESCRIPTIONS, RECENT_REQUESTS, SESSIONS_SHOWN } from "../constants"
+import { probe, recentRequests, routedDirs, runsStaleCode } from "../inspect"
 import * as launchd from "../launchd"
 import { shortId } from "../sessions"
-import { perSession, savedShare, totals, withinWindow } from "../stats"
+import { perSession, savedShare, type Totals, totals, withinWindow } from "../stats"
 import type { Command } from "../types"
 import { ago, c, line, percent, rows, table, tilde, tokens, warn } from "../ui"
 
+const readSettings = (dir: string): Record<string, any> => {
+  try {
+    return JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8"))
+  } catch {
+    return {}
+  }
+}
+
 const dot = (on: boolean) => (on ? c.green("●") : c.red("○"))
+
+const summary = (title: string, sum: Totals) => {
+  const hit = sum.cacheRead + sum.cacheWrite + sum.uncached
+  line()
+  line(`  ${title}`)
+  rows([
+    ["Requests", `${c.bold(String(sum.requests))}${sum.folds ? `  ${c.dim(`${sum.folds} fold${sum.folds === 1 ? "" : "s"}, last ${ago(sum.lastFold!)}`)}` : ""}`],
+    ["Cache", `${c.bold(tokens(sum.cacheRead))} read  ${c.dim("·")}  ${tokens(sum.cacheWrite)} written  ${c.dim("·")}  ${tokens(sum.uncached)} uncached${hit ? c.dim(`  (${percent(sum.cacheRead / hit)} hit)`) : ""}`],
+    ["Saved", sum.saved > 0 ? `${c.bold(c.green(tokens(sum.saved)))} input tokens not sent  ${c.dim(`(${percent(sum.saved / (sum.sent + sum.saved))} less than plain Claude Code)`)}` : c.dim("no data yet")],
+  ], 4)
+}
 
 export const status: Command = {
   summary: "Show what eunoe is doing and saving",
@@ -22,16 +42,21 @@ export const status: Command = {
     const config = loadConfig()
     const health = await probe(config.port)
     const routed = routedDirs(config)
-    const recent = recentRequests()
-    const today = withinWindow(recent)
+    const all = recentRequests(Infinity)
+    const recent = all.slice(-RECENT_REQUESTS)
     const stats = perSession(recent)
-    const sum = totals(today)
+    const sum = totals(withinWindow(recent))
+    const allTime = totals(all)
 
     line()
     line(`  ${c.bold("eunoe")} ${c.dim(VERSION)}`)
     line()
 
-    const recall = config.rerank === RERANK_OFF ? "bm25" : rerankKey() ? `bm25 ${c.dim("→")} ${config.rerank}` : `bm25  ${c.dim(`(${config.rerank} needs a key in ${tilde(paths.typesafeKey)} or TYPESAFE_API_KEY)`)}`
+    const lastRerank = [...recent].reverse().find((r: any) => r.reranked || r.rerankError) as any
+    const recall = config.rerank === RERANK_OFF ? "bm25"
+      : !rerankKey() ? `bm25  ${c.dim(`(${config.rerank} needs a key in ${tilde(paths.typesafeKey)} or TYPESAFE_API_KEY)`)}`
+      : lastRerank?.rerankError ? `bm25  ${c.yellow(`(${config.rerank} failing: ${String(lastRerank.rerankError).replace(/^[^:]+: /, "")}, last ${ago(lastRerank.ts)})`)}`
+      : `bm25 ${c.dim("→")} ${config.rerank}`
     rows([
       ["Proxy", health ? `${dot(true)} running on ${c.cyan(proxyUrl(config.port))}${launchd.isInstalled() ? c.dim("  launchd") : ""}` : `${dot(false)} not running ${c.dim("(eunoe start)")}`],
       ["Claude Code", routed.length ? `${dot(true)} routed ${c.dim(routed.map((dir) => tilde(path.join(dir, "settings.json"))).join(", "))}` : `${c.dim("○")} not routed ${c.dim("(eunoe start)")}`],
@@ -62,20 +87,26 @@ export const status: Command = {
       }))
     }
 
-    if (sum.requests) {
-      const hit = sum.cacheRead + sum.cacheWrite + sum.uncached
-      line()
-      line(`  ${c.dim("Last 24h")}`)
-      rows([
-        ["Requests", `${c.bold(String(sum.requests))}${sum.folds ? `  ${c.dim(`${sum.folds} fold${sum.folds === 1 ? "" : "s"}, last ${ago(sum.lastFold!)}`)}` : ""}`],
-        ["Cache", `${c.bold(tokens(sum.cacheRead))} read  ${c.dim("·")}  ${tokens(sum.cacheWrite)} written  ${c.dim("·")}  ${tokens(sum.uncached)} uncached${hit ? c.dim(`  (${percent(sum.cacheRead / hit)} hit)`) : ""}`],
-        ["Saved", sum.saved > 0 ? `${c.bold(c.green(tokens(sum.saved)))} input tokens not sent  ${c.dim(`(${percent(sum.saved / (sum.sent + sum.saved))} less than plain Claude Code)`)}` : c.dim("no data yet")],
-      ], 4)
-    }
+    if (sum.requests) summary(c.dim("Last 24h"), sum)
+    if (allTime.requests > sum.requests) summary(`${c.dim("All time")}  ${c.dim(`since ${new Date(all[0].ts).toLocaleDateString()}`)}`, allTime)
 
     if (health && health.mode !== config.mode) {
       line()
       warn(`The running proxy reports mode ${health.mode}; it switches on its next request.`)
+    }
+    if (health && runsStaleCode(health)) {
+      line()
+      warn(`The proxy is running older code than what's installed. ${c.bold("eunoe start")} restarts it.`)
+    }
+    const unguarded = config.mode !== "off" ? routed.filter((dir) => readSettings(dir).env?.[BLOCKING_LIMIT_ENV] === undefined) : []
+    if (unguarded.length) {
+      line()
+      warn(`Claude Code can still refuse to send near a full window in ${unguarded.map((dir) => tilde(path.join(dir, "settings.json"))).join(", ")}. ${c.bold("eunoe start")} fixes it.`)
+    }
+    const missed = recent.filter((r: any) => r.overflow || r.fit === "over") as any[]
+    if (missed.length) {
+      line()
+      warn(`${missed.length} request${missed.length === 1 ? "" : "s"} didn't fit the window on the first try, last ${ago(missed.at(-1).ts)}. Details in ${tilde(paths.requests)}.`)
     }
     line()
   },

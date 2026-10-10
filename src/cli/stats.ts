@@ -1,4 +1,4 @@
-import { STATUS_WINDOW_MS } from "./constants"
+import { STATUS_WINDOW_MS, THREAD_SUFFIX } from "./constants"
 import type { RequestRecord } from "./types"
 
 export interface SessionStats {
@@ -20,8 +20,6 @@ export interface Totals {
   sent: number
   saved: number
 }
-
-const THREAD_SUFFIX = /-[0-9a-f]{24}$/
 
 export const sessionOf = (record: RequestRecord): string | null => (typeof record.thread === "string" ? record.thread.replace(THREAD_SUFFIX, "") : null)
 

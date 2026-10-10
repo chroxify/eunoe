@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
+import { BLOCKING_LIMIT_ENV, BLOCKING_LIMIT_OFF } from "./constants"
 import type { Settings } from "./types"
 
 export const proxyUrl = (port: number) => `http://127.0.0.1:${port}`
@@ -16,14 +17,22 @@ export function withoutEunoe(settings: Settings, port: number): Settings {
     if (Object.keys(env).length > 0) next.env = env
     else delete next.env
   }
-  delete next.autoCompactEnabled
-  return next
+  return withCompactionOwner(next, "off")
 }
 
 export function withCompactionOwner(settings: Settings, mode: string): Settings {
   const next = { ...settings }
-  if (mode === "off") delete next.autoCompactEnabled
-  else next.autoCompactEnabled = false
+  if (mode === "off") {
+    delete next.autoCompactEnabled
+    if (next.env?.[BLOCKING_LIMIT_ENV] === BLOCKING_LIMIT_OFF) {
+      const { [BLOCKING_LIMIT_ENV]: _, ...env } = next.env
+      if (Object.keys(env).length > 0) next.env = env
+      else delete next.env
+    }
+  } else {
+    next.autoCompactEnabled = false
+    next.env = { ...next.env, [BLOCKING_LIMIT_ENV]: BLOCKING_LIMIT_OFF }
+  }
   return next
 }
 

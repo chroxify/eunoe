@@ -13,7 +13,7 @@ function settledCut(turns: Message[][], index: number) {
   return cut
 }
 
-export function compact({ body, config, state, window, guide, mayCompact, omittedBefore = 0 }: CompactInput): CompactResult {
+export function compact({ body, config, state, window, guide, mayCompact, omittedBefore = 0, decorate = (m) => m }: CompactInput): CompactResult {
   const { turns } = splitTurns(body.messages)
   let stateChanged = false
 
@@ -45,7 +45,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
   const target = window ? targetSize(size, window) : Number.POSITIVE_INFINITY
 
   let messages = build()
-  let estimate = size.of(messages)
+  let estimate = size.of(decorate(messages))
   const actions: string[] = []
   const current = turns.length - 1
   const moveCut = (index: number, action: string) => {
@@ -54,7 +54,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
     state.cut = turnFingerprint(turns[index])
     actions.push(action)
     messages = build()
-    estimate = size.of(messages)
+    estimate = size.of(decorate(messages))
   }
 
   if (mayCompact && rolling) {
@@ -85,7 +85,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
         actions.push(`cleared=${state.cleared}`)
       }
       messages = build()
-      estimate = size.of(messages)
+      estimate = size.of(decorate(messages))
     }
     stateChanged = true
   }

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { rewrite } from "../src/proxy/rewrite"
+import { SESSIONS_SECTION } from "../src/context/prompts"
+import { messageFingerprint, rewrite } from "../src/proxy/rewrite"
+import { saveState } from "../src/proxy/state"
+import { splitTurns, turnFingerprint } from "../src/context/turns"
 import type { Body } from "../src/context/types"
 import { call, config, freshSession, reply, result, session, transcript, user } from "./fixtures"
 
@@ -20,9 +23,9 @@ describe("passthrough", () => {
 })
 
 describe("compact", () => {
-  test("below the limit, the request goes upstream byte for byte", () => {
+  test("below the limit, the messages go upstream byte for byte", () => {
     const b = body(session(5))
-    expect(run(b).body).toBe(b)
+    expect(run(b).body.messages).toBe(b.messages)
   })
 
   test("at the limit, every earlier turn survives as prompt + reply and the live turn stays whole", () => {
@@ -38,22 +41,33 @@ describe("compact", () => {
     expect(sent).toContain("Every earlier turn is shown below")
   })
 
+  test("recalled context attached to kept prompts counts toward the limit", () => {
+    const sessionId = freshSession()
+    const b = body(session(5))
+    const prompt = b.messages.find((m) => JSON.stringify(m.content).includes("task 2"))!
+    const key = `${sessionId}-${turnFingerprint(splitTurns(b.messages).turns[0])}`
+    saveState(key, { recalls: { [messageFingerprint(prompt)]: `<recalled-context>\n${"x".repeat(400_000)}\n</recalled-context>` } })
+    const out = run(b, {}, 100_000, sessionId)
+    expect(out.note.compacted).toBe(true)
+    expect(text(out.body).length).toBeLessThan(0.9 * 100_000 * 3.6)
+  })
+
   test("an unknown window never cuts, whatever the size", () => {
     const b = body(session(20, 20_000))
-    expect(run(b, { compactAt: 0.01 }, null).body).toBe(b)
+    expect(run(b, { compactAt: 0.01 }, null).body.messages).toBe(b.messages)
   })
 
   test("a 325k request on a 1M model is nowhere near the limit (live regression)", () => {
     const b = body(session(14, 80_000))
     const out = run(b, { mode: "compact" }, 1_000_000)
-    expect(out.body).toBe(b)
+    expect(out.body.messages).toBe(b.messages)
     expect(out.note.compacted).toBe(false)
   })
 
   test("count_tokens applies an existing cut but never makes one", () => {
     const b = body(session(20, 3_000))
     const out = rewrite({ body: b, sessionId: freshSession(), config: config({ compactAt: 0.1 }), transcript, window: 100_000, mayCompact: false })
-    expect(out.body).toBe(b)
+    expect(out.body.messages).toBe(b.messages)
   })
 
   test("the same history gives the same bytes, and grows append-only after a cut", () => {
@@ -160,7 +174,7 @@ describe("default", () => {
 
   test("under the budget nothing moves", () => {
     const b = body(session(3))
-    expect(run(b, rolling, 1_000_000).body).toBe(b)
+    expect(run(b, rolling, 1_000_000).body.messages).toBe(b.messages)
   })
 
   test("is the default, with evidence kept in folded turns and recall attached to the prompt", () => {
@@ -179,5 +193,33 @@ describe("default", () => {
     expect(sent).toContain("<recalled-context>")
     expect(sent.split("dpl_qgthe6u4p7").length).toBe(3)
     expect(text(run(body(history), { ...rolling, eval: { evidence: false, recall: false } }, 1_000_000).body)).not.toContain("dpl_qgthe6u4p7")
+  })
+})
+
+describe("earlier sessions", () => {
+  const sections = (b: Body) => (Array.isArray(b.system) ? b.system : [{ text: b.system }]).filter((block: any) => block.text === SESSIONS_SECTION).length
+
+  test("every agent request carries the one section that teaches the session commands, cached at the end of the system prompt", () => {
+    const out = run(body(session(3)))
+    expect(sections(out.body)).toBe(1)
+    expect((out.body.system as any[]).at(-1).text).toBe(SESSIONS_SECTION)
+    const cached = run({ ...body(session(3)), system: [{ type: "text", text: "s", cache_control: { type: "ephemeral" } }] })
+    expect((cached.body.system as any[]).at(-1).cache_control).toEqual({ type: "ephemeral" })
+    expect((cached.body.system as any[])[0].cache_control).toBeUndefined()
+    for (const strategy of ["guide", "tail", "trim"] as const) expect(sections(run(body(session(3)), { eval: { strategy } }).body)).toBe(1)
+  })
+
+  test("off mode and requests without tools get nothing", () => {
+    const b = body(session(3))
+    expect(sections(run(b, { mode: "off" }).body)).toBe(0)
+    expect(sections(run({ ...b, tools: [] }).body)).toBe(0)
+    expect(sections(run({ ...b, tools: [] }, { eval: { strategy: "trim" } }).body)).toBe(0)
+  })
+
+  test("the section appears once after compaction, and the cut accounts for it", () => {
+    const out = run(body(session(20, 3_000)), { compactAt: 0.1 })
+    expect(out.note.compacted).toBe(true)
+    expect(sections(out.body)).toBe(1)
+    expect(JSON.stringify(out.body.system).split("Earlier sessions in this project").length - 1).toBe(1)
   })
 })

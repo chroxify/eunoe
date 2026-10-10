@@ -6,7 +6,7 @@ import type { Body } from "../context/types"
 import { findSessionFile } from "../transcript/locate"
 import { prepareTranscript } from "../transcript/search"
 import { VERSION } from "../version"
-import { CANONICAL_HEADER, HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, SESSION_HEADER, TRANSCRIPT_HEADER, WINDOW_HEADER } from "./constants"
+import { CANONICAL_HEADER, HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, OVERFLOW_MARGIN, PROMPT_TOO_LONG, SESSION_HEADER, TRANSCRIPT_HEADER, WINDOW_HEADER } from "./constants"
 import { applyCanonical } from "./canonical"
 import { sizeOf } from "./estimate"
 import { contextFingerprint } from "./fingerprint"
@@ -33,6 +33,13 @@ function forwardableHeaders(headers: Headers) {
   out.delete("content-encoding")
   out.delete("content-length")
   return out
+}
+
+const STARTED_AT = Date.now()
+
+export function tooLong(errorText: string): number | null {
+  const tokens = Number(errorText.match(PROMPT_TOO_LONG)?.[1])
+  return Number.isFinite(tokens) && tokens > 0 ? tokens : null
 }
 
 async function prepare(request: Request, body: Body, base: Config, isCountTokens: boolean) {
@@ -63,31 +70,33 @@ async function prepare(request: Request, body: Body, base: Config, isCountTokens
 export async function handle(request: Request): Promise<Response> {
   const config = loadConfig()
   const url = new URL(request.url)
-  if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid } satisfies Health)
+  if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid, startedAt: STARTED_AT } satisfies Health)
   const headers = new Headers(request.headers)
   headers.delete("host")
   headers.delete("content-length")
   headers.delete("accept-encoding")
 
-  let bodyText = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text()
+  const givenText = request.method === "GET" || request.method === "HEAD" ? undefined : await request.text()
+  let bodyText = givenText
   const isMessages = request.method === "POST" && url.pathname.startsWith("/v1/messages")
   const isCountTokens = url.pathname.includes("count_tokens")
   let note: Note = { action: "pass" }
-  let threadKey: string | null = null
+  let threadKey = null as string | null
   let sentSize = 0
   let givenSize = 0
-  let sent: (ContextFingerprint & { session: string | null }) | null = null
+  let sent = null as (ContextFingerprint & { session: string | null }) | null
 
-  if (bodyText && isMessages) {
+  const build = async () => {
+    if (!givenText || !isMessages) return
     try {
-      const given = JSON.parse(bodyText) as Body
+      const given = JSON.parse(givenText) as Body
       const canonicalFile = config.eval?.trustHeaders ? request.headers.get(CANONICAL_HEADER) : null
       const canonical = canonicalFile ? applyCanonical(given, canonicalFile) : null
       const body = canonical?.body ?? given
       const result = await prepare(request, body, config, isCountTokens)
       note = canonical ? { ...result.note, canonical: canonical.status } : result.note
       threadKey = result.threadKey
-      if (result.body !== given) bodyText = JSON.stringify(result.body, wellFormed)
+      bodyText = result.body !== given ? JSON.stringify(result.body, wellFormed) : givenText
       sentSize = sizeOf(result.body)
       givenSize = result.body === given ? sentSize : sizeOf(given)
       if (config.eval) sent = { session: sessionIdOf(request.headers, given), ...contextFingerprint(result.body), given: contextFingerprint(given) }
@@ -95,13 +104,31 @@ export async function handle(request: Request): Promise<Response> {
       note = { action: "error-passthrough", error: String(error) }
     }
   }
+  const send = () => fetch(config.upstream + url.pathname + url.search, { method: request.method, headers, body: bodyText })
 
-  const upstream = await fetch(config.upstream + url.pathname + url.search, { method: request.method, headers, body: bodyText })
+  await build()
+  let upstream = await send()
 
   if (upstream.status >= 400 && note.action !== "pass") {
     const errorText = await upstream.text()
-    logRequest({ path: url.pathname, status: upstream.status, thread: threadKey, ...note, error: errorText.slice(0, LOGGED_ERROR_CHARS) })
-    return new Response(errorText, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
+    const overflow = tooLong(errorText)
+    if (overflow && threadKey && sentSize > 0 && !isCountTokens) {
+      const state = loadState(threadKey)
+      state.ratio = Math.max(state.ratio ?? 0, overflow / sentSize) * OVERFLOW_MARGIN
+      saveState(threadKey, state)
+      logRequest({ path: url.pathname, status: upstream.status, thread: threadKey, ...note, overflow, error: errorText.slice(0, LOGGED_ERROR_CHARS) })
+      await build()
+      note = { ...note, healed: overflow }
+      upstream = await send()
+    } else {
+      logRequest({ path: url.pathname, status: upstream.status, thread: threadKey, ...note, error: errorText.slice(0, LOGGED_ERROR_CHARS) })
+      return new Response(errorText, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
+    }
+    if (upstream.status >= 400) {
+      const retryError = await upstream.text()
+      logRequest({ path: url.pathname, status: upstream.status, thread: threadKey, ...note, error: retryError.slice(0, LOGGED_ERROR_CHARS) })
+      return new Response(retryError, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
+    }
   }
 
   const response = new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })

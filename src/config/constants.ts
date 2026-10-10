@@ -13,6 +13,7 @@ export const paths = {
   sessions: path.join(EUNOE_DIR, "sessions.json"),
   proxyLog: path.join(EUNOE_DIR, "proxy.log"),
   typesafeKey: path.join(EUNOE_DIR, "typesafe-key"),
+  loaded: path.join(EUNOE_DIR, "loaded"),
 }
 
 export const RERANK_OFF = "off"
@@ -35,5 +36,6 @@ export const DEFAULTS: Config = {
 export const MODES: Mode[] = ["default", "compact", "off"]
 export const SEARCH_MODES: SearchMode[] = ["jsonl", "markdown", "xml", "qmd"]
 export const TUNABLES: Tunable[] = ["keep", "budget", "compactAt", "keepTurns", "search", "rerank"]
+export const TEXT_TUNABLES: Tunable[] = ["search", "rerank"]
 export const SCOPES: Scope[] = ["all", "sessions"]
 export const SESSION_ID_PATTERN = /^[a-zA-Z0-9-]+$/

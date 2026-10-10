@@ -1,30 +1,8 @@
-/**
- * Score a real-session run against SPEC.md, offline. Reads bench/out/real/p*.json
- * (recall tier) and c*.json (continuation tier, when present) and writes
- * results.md + results.json next to them.
- *
- * Everything here is arithmetic over what the arms already produced; no model
- * is called. The hypothesis table reports every pre-registered test, passes
- * and fails alike, with the bootstrap CI that decides it.
- *
- *   bun bench/real/validate.ts
- */
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
+import { BOOTSTRAP, NON_INFERIORITY, OUT, QUESTION_TYPES, VALIDATE_ARMS, VALIDATE_BUCKETS, VALIDATE_CONT_ARMS } from "./constants"
 
-const OUT = path.join(import.meta.dir, "..", "out", "real")
-const ARMS = ["native", "native+guide", "tail", "eunoe", "rolling", "trim", "full"] as const
-type Arm = (typeof ARMS)[number]
-const TYPES = ["tool_evidence", "mid_history", "instruction", "decision", "continuation", "recent"]
-const BUCKETS: Array<[string, (n: number) => boolean]> = [
-  ["live", (n) => n === 0],
-  ["1-3", (n) => n >= 1 && n <= 3],
-  ["4-10", (n) => n >= 4 && n <= 10],
-  ["11-25", (n) => n >= 11 && n <= 25],
-  ["26+", (n) => n >= 26],
-]
-const NON_INFERIORITY = -10
-const BOOTSTRAP = 20_000
+type Arm = (typeof VALIDATE_ARMS)[number]
 
 interface Question { id: number; type: string; turnsAgo?: number; question: string; answer: string }
 interface Grade { score: number; label: string }
@@ -57,8 +35,6 @@ interface Result {
   judges: string[]
 }
 
-// ---------------------------------------------------------------- stats
-
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN)
 const median = (xs: number[]) => (xs.length ? [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)] : NaN)
 const sd = (xs: number[]) => {
@@ -88,17 +64,13 @@ const powerN = (effect: number, spread: number) => (effect ? Math.max(3, Math.ce
 const pct = (x: number, d = 1) => (Number.isFinite(x) ? `${x >= 0 ? "+" : ""}${x.toFixed(d)}` : "–")
 const fmt = (x: number, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : "–")
 
-// ---------------------------------------------------------------- scoring
-
 const replicates = (r: Result) => [r, ...(r.reps ?? [])]
 
-/** Judge-mean score (0–2) per kept question for one arm in one replicate, or null when the arm has no grades. */
 function scoresOf(r: Result, arm: string): number[] | null {
   const judged = r.judges.filter((m) => r.grades[m]?.[arm])
   if (!judged.length || !r.answers[arm]?.answers?.length) return null
   return r.questions.map((_, i) => mean(judged.map((m) => r.grades[m][arm][i]?.score ?? 0)))
 }
-/** The same, averaged over every replicate of the point that graded the arm. */
 function scores(r: Result, arm: string): number[] | null {
   const per = replicates(r).map((x) => scoresOf(x, arm)).filter((s): s is number[] => s !== null)
   if (!per.length) return null
@@ -107,15 +79,12 @@ function scores(r: Result, arm: string): number[] | null {
 function labelsOf(r: Result, arm: string): string[] | null {
   const judged = r.judges.filter((m) => r.grades[m]?.[arm])
   if (!judged.length || !r.answers[arm]?.answers?.length) return null
-  // Fabrication is counted when either judge saw it.
   return r.questions.map((_, i) => (judged.some((m) => r.grades[m][arm][i]?.label === "wrong") ? "wrong" : judged.every((m) => r.grades[m][arm][i]?.label === "unknown") ? "unknown" : judged[0] ? r.grades[judged[0]][arm][i]?.label ?? "unknown" : "unknown"))
 }
-/** Labels pooled over replicates, for rates. Index-aligned uses take one replicate at a time. */
 function pooledLabels(r: Result, arm: string): string[] | null {
   const per = replicates(r).map((x) => labelsOf(x, arm)).filter((l): l is string[] => l !== null)
   return per.length ? per.flat() : null
 }
-/** Per-point % of max over a subset of questions. */
 function pointPct(r: Result, arm: string, keep: (q: Question, i: number) => boolean = () => true): number | null {
   const s = scores(r, arm)
   if (!s) return null
@@ -138,7 +107,6 @@ function paired(results: Result[], a: string, b: string, keep?: (q: Question, i:
 }
 const line = (p: ReturnType<typeof paired>) => `n=${p.n} mean ${pct(p.mean)} [${pct(p.lo)}, ${pct(p.hi)}] sd ${fmt(p.sd)} · 80% power needs ${p.powerN === Infinity ? "–" : p.powerN}`
 
-/** Which questions an arm could only answer by searching the transcript. */
 function needsLookup(r: Result, arm: string, q: Question): boolean | null {
   if (!(q.type === "tool_evidence" || q.type === "recent") || (q.turnsAgo ?? 0) === 0) return false
   const ago = q.turnsAgo ?? 0
@@ -150,8 +118,6 @@ function needsLookup(r: Result, arm: string, q: Question): boolean | null {
     default: return null
   }
 }
-
-// ---------------------------------------------------------------- load
 
 const files = (await Array.fromAsync(new Bun.Glob("p[0-9][0-9]*.json").scan({ cwd: OUT, absolute: true }))).filter((f) => /p\d\d(\.r\d+)?\.json$/.test(f)).sort()
 const loaded: Result[] = files.map((f) => JSON.parse(readFileSync(f, "utf8")))
@@ -182,13 +148,11 @@ if (repCount.some((n) => n > 1)) {
   say()
 }
 
-// ---------------------------------------------------------------- guards
-
 say(`## Validity guards`)
 say()
 const fingerprintProblems: string[] = []
 for (const r of all) {
-  const given = replicates(r).flatMap((x) => ARMS.map((a) => x.answers[a]?.context?.given)).filter(Boolean) as Array<{ system: string; tools: string }>
+  const given = replicates(r).flatMap((x) => VALIDATE_ARMS.map((a) => x.answers[a]?.context?.given)).filter(Boolean) as Array<{ system: string; tools: string }>
   const systems = new Set(given.map((g) => g.system))
   const tools = new Set(given.map((g) => g.tools))
   if (systems.size > 1 || tools.size > 1) fingerprintProblems.push(`${r.tag}: ${systems.size} system prompts, ${tools.size} tool lists across arms`)
@@ -205,7 +169,7 @@ let within = 0
 let pairs = 0
 for (const r of all.flatMap(replicates)) {
   if (r.judges.length < 2) continue
-  for (const arm of ARMS) {
+  for (const arm of VALIDATE_ARMS) {
     const [a, b] = r.judges.map((m) => r.grades[m]?.[arm])
     if (!a || !b) continue
     r.questions.forEach((_, i) => {
@@ -221,7 +185,7 @@ let dead = 0
 let aced = 0
 let separating = 0
 for (const r of all) {
-  const armScores = ARMS.map((a) => scores(r, a)).filter(Boolean) as number[][]
+  const armScores = VALIDATE_ARMS.map((a) => scores(r, a)).filter(Boolean) as number[][]
   r.questions.forEach((_, i) => {
     const vals = armScores.map((s) => s[i])
     if (!vals.length) return
@@ -230,17 +194,15 @@ for (const r of all) {
     else separating += 1
   })
 }
-const projectReads = ARMS.map((a) => { const rs = all.filter((r) => r.answers[a]?.lookups); return rs.length ? `${a} ${rs.reduce((n, r) => n + (r.answers[a].lookups.project ?? 0), 0)}/${rs.reduce((n, r) => n + r.answers[a].lookups.calls, 0)}` : null }).filter(Boolean)
+const projectReads = VALIDATE_ARMS.map((a) => { const rs = all.filter((r) => r.answers[a]?.lookups); return rs.length ? `${a} ${rs.reduce((n, r) => n + (r.answers[a].lookups.project ?? 0), 0)}/${rs.reduce((n, r) => n + r.answers[a].lookups.calls, 0)}` : null }).filter(Boolean)
 say(`- **Lookups that were not the transcript** (project files or elsewhere; the prompt forbids them, and a \`recent\` answer found that way is memory of nothing): ${projectReads.join(" · ") || "none"}`)
 say(`- **Question shape:** ${separating} questions separated the arms, ${aced} were aced by every arm, ${dead} were failed by every arm (suspect even after the oracle).`)
-const perfect = ARMS.map((a) => { const xs = all.map((r) => pointPct(r, a)).filter((x): x is number => x !== null); return xs.length ? `${a} ${Math.round((100 * xs.filter((x) => x === 100).length) / xs.length)}%` : null }).filter(Boolean)
+const perfect = VALIDATE_ARMS.map((a) => { const xs = all.map((r) => pointPct(r, a)).filter((x): x is number => x !== null); return xs.length ? `${a} ${Math.round((100 * xs.filter((x) => x === 100).length) / xs.length)}%` : null }).filter(Boolean)
 say(`- **Ceiling (perfect points per arm):** ${perfect.join(" · ")}`)
 const projects: Record<string, number> = {}
 for (const r of all) projects[path.basename(r.cwd)] = (projects[path.basename(r.cwd)] ?? 0) + 1
 say(`- **Points per project:** ${Object.entries(projects).map(([p, n]) => `${p} ${n}`).join(" · ")}`)
 say()
-
-// ---------------------------------------------------------------- per-arm table
 
 say(`## Recall by arm (headline set, ${headline.length} points)`)
 say()
@@ -249,14 +211,14 @@ const cell = (arm: string, keep?: (q: Question, i: number) => boolean) => {
   return xs.length ? `${Math.round(mean(xs))}%` : "–"
 }
 table(
-  ["arm", "all", ...TYPES.map((t) => t.replace("_", " ")), "pts", "ctx (median)", "sec", "lookups", "wrong", "unknown"],
-  ARMS.filter((a) => headline.some((r) => scores(r, a))).map((arm) => {
+  ["arm", "all", ...QUESTION_TYPES.map((t) => t.replace("_", " ")), "pts", "ctx (median)", "sec", "lookups", "wrong", "unknown"],
+  VALIDATE_ARMS.filter((a) => headline.some((r) => scores(r, a))).map((arm) => {
     const rs = headline.filter((r) => scores(r, arm))
     const lab = rs.flatMap((r) => pooledLabels(r, arm) ?? [])
     return [
       arm,
       `**${cell(arm)}**`,
-      ...TYPES.map((t) => cell(arm, (q) => q.type === t)),
+      ...QUESTION_TYPES.map((t) => cell(arm, (q) => q.type === t)),
       String(rs.length),
       `${Math.round(median(rs.map((r) => r.answers[arm].contextAtQuestion ?? 0)) / 1000)}k`,
       fmt(median(rs.map((r) => r.answers[arm].wallMs / 1000)), 0),
@@ -269,24 +231,22 @@ table(
 
 say(`### By distance from the cut (turns ago)`)
 say()
-table(["arm", ...BUCKETS.map(([name]) => name)], ARMS.filter((a) => headline.some((r) => scores(r, a))).map((arm) => [arm, ...BUCKETS.map(([, inBucket]) => cell(arm, (q) => inBucket(q.turnsAgo ?? 0)))]))
+table(["arm", ...VALIDATE_BUCKETS.map(([name]) => name)], VALIDATE_ARMS.filter((a) => headline.some((r) => scores(r, a))).map((arm) => [arm, ...VALIDATE_BUCKETS.map(([, inBucket]) => cell(arm, (q) => inBucket(q.turnsAgo ?? 0)))]))
 
 say(`### By stratum`)
 say()
 for (const kind of ["real", "synthetic"] as const) {
   const rs = headline.filter((r) => r.kind === kind)
   if (!rs.length) continue
-  say(`**${kind}** (${rs.length} points): ${ARMS.map((a) => { const xs = rs.map((r) => pointPct(r, a)).filter((x): x is number => x !== null); return xs.length ? `${a} ${Math.round(mean(xs))}%` : null }).filter(Boolean).join(" · ")}`)
+  say(`**${kind}** (${rs.length} points): ${VALIDATE_ARMS.map((a) => { const xs = rs.map((r) => pointPct(r, a)).filter((x): x is number => x !== null); return xs.length ? `${a} ${Math.round(mean(xs))}%` : null }).filter(Boolean).join(" · ")}`)
   say()
 }
-
-// ---------------------------------------------------------------- transcript use
 
 say(`## Transcript use (H9)`)
 say()
 const lookupRows: string[][] = []
 const lookupStats: Record<string, { needed: number; found: number; scoreFound: number[]; scoreMissed: number[]; wrongUnsearched: number; unsearched: number; wasted: number }> = {}
-for (const arm of ARMS) {
+for (const arm of VALIDATE_ARMS) {
   const st = { needed: 0, found: 0, scoreFound: [] as number[], scoreMissed: [] as number[], wrongUnsearched: 0, unsearched: 0, wasted: 0 }
   for (const r of headline.flatMap(replicates)) {
     const s = scoresOf(r, arm)
@@ -313,13 +273,11 @@ for (const arm of ARMS) {
 }
 table(["arm", "needed a lookup", "found by lookup", "score when found (0–2)", "score when not", "guessed wrong when it didn't search", "lookups it didn't need"], lookupRows)
 
-// ---------------------------------------------------------------- skills
-
 say(`## Skills after the cut (H10)`)
 say()
 const withSkills = headline.filter((r) => r.skillsBeforeCut?.length)
 const skillRate: Record<string, string> = {}
-for (const arm of ARMS) {
+for (const arm of VALIDATE_ARMS) {
   let have = 0
   let total = 0
   for (const r of withSkills.flatMap(replicates)) {
@@ -332,8 +290,6 @@ for (const arm of ARMS) {
 say(`${withSkills.length} point(s) loaded a skill before the cut${withSkills.length < 10 ? " — **fewer than 10, so H10 is reported as untested**" : ""}. Retention per arm: ${Object.entries(skillRate).map(([a, v]) => `${a} ${v}`).join(" · ") || "no skill data"}.`)
 say()
 
-// ---------------------------------------------------------------- continuation (tier 2)
-
 interface Continuation {
   tag: string
   kind: string
@@ -341,7 +297,6 @@ interface Continuation {
 }
 const cFiles = (await Array.fromAsync(new Bun.Glob("c[0-9][0-9].json").scan({ cwd: OUT, absolute: true }))).sort()
 const cont: Continuation[] = cFiles.map((f) => JSON.parse(readFileSync(f, "utf8")))
-const contArms = ARMS.filter((a) => a !== "full")
 const contMetric = (arm: string, key: "fidelity" | "violations" | "redundant") => cont.map((c) => c.arms[arm]?.[key]).filter((x): x is number => typeof x === "number")
 const contPaired = (a: string, b: string, key: "fidelity" | "violations" | "redundant") => {
   const diffs = cont.flatMap((c) => { const x = c.arms[a]?.[key]; const y = c.arms[b]?.[key]; return typeof x === "number" && typeof y === "number" ? [x - y] : [] })
@@ -353,13 +308,11 @@ const contPaired = (a: string, b: string, key: "fidelity" | "violations" | "redu
 if (cont.length) {
   say(`## Continuation (tier 2, ${cont.length} points)`)
   say()
-  table(["arm", "task fidelity (0–2)", "instruction violations", "redundant work", "read the transcript before acting", "tool calls", "sec", "tokens"], contArms.filter((a) => cont.some((c) => c.arms[a])).map((arm) => {
+  table(["arm", "task fidelity (0–2)", "instruction violations", "redundant work", "read the transcript before acting", "tool calls", "sec", "tokens"], VALIDATE_CONT_ARMS.filter((a) => cont.some((c) => c.arms[a])).map((arm) => {
     const rs = cont.filter((c) => c.arms[arm])
     return [arm, fmt(mean(contMetric(arm, "fidelity")), 2), fmt(mean(contMetric(arm, "violations")), 2), fmt(mean(contMetric(arm, "redundant")), 2), `${rs.filter((c) => c.arms[arm]!.transcriptReadsBeforeActing > 0).length}/${rs.length}`, fmt(mean(rs.map((c) => c.arms[arm]!.toolCalls)), 1), fmt(median(rs.map((c) => c.arms[arm]!.wallMs / 1000)), 0), `${Math.round(mean(rs.map((c) => c.arms[arm]!.tokens)) / 1000)}k`]
   }))
 }
-
-// ---------------------------------------------------------------- hypotheses
 
 say(`## Pre-registered hypotheses`)
 say()
@@ -409,11 +362,9 @@ const h10ok = withSkills.length >= 10 ? ["eunoe", "rolling", "trim"].every((a) =
 rows.push(["H10 skills and instructions survive the cut", "eunoe, rolling, trim keep 100% of skills loaded before the cut", `${withSkills.length} points with skills · ${Object.entries(skillRate).map(([a, v]) => `${a} ${v}`).join(", ") || "no data"}`, h10ok === null ? "untested (fewer than 10 points with skills)" : verdict(h10ok)])
 table(["hypothesis", "passes if", "observed", "verdict"], rows)
 
-// ---------------------------------------------------------------- every pair, for the mode decision
-
 say(`## Every arm against every other (headline set, all questions)`)
 say()
-const armsPresent = ARMS.filter((a) => headline.filter((r) => scores(r, a)).length >= 3)
+const armsPresent = VALIDATE_ARMS.filter((a) => headline.filter((r) => scores(r, a)).length >= 3)
 table(["", ...armsPresent], armsPresent.map((a) => [a, ...armsPresent.map((b) => (a === b ? "·" : (() => { const p = paired(headline, a, b); return `${pct(p.mean, 0)} [${pct(p.lo, 0)}, ${pct(p.hi, 0)}]` })()))]))
 
 say(`## Tokens per point per arm (headline set)`)

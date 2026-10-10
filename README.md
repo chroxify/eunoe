@@ -45,6 +45,10 @@ at known depths, such as a value a command printed once, an error, an
 instruction that was later revised or a decision with its rejected options,
 and scored by exact match with no judge involved.
 
+> These numbers come from one developer's sessions. They are a careful
+> measurement, not a general one, so read them as a strong signal rather than
+> a guarantee for your own work.
+
 | | facts remembered | rules followed without a reminder | prompt size when asked | tokens per session | transcript lookups per session | time per session | said "I don't know" | answered wrong |
 |---|---|---|---|---|---|---|---|---|
 | Claude Code's compaction | 70% | 92% | 70k | 741k | 10.1 | 53s | 172 of 600 | 7 of 600 |
@@ -81,6 +85,12 @@ The method was chosen on a separate development split and frozen before the
 test split ran. The suites, the pre-registered spec, every per-arm table and
 the limits of the study (one developer's repositories, one answering model,
 one run per arm) are in [`bench/`](bench/README.md).
+
+Context management is hard to benchmark well alone, because the honest test
+is many people's real sessions. If you run the bench on your own sessions,
+find a case where eunoe does worse, or have a better way to measure this,
+please open an issue or a pull request. Results from other setups are the
+contribution I'd value most.
 
 ## Install
 
@@ -321,6 +331,24 @@ eunoe uninstall              # stop and remove the background proxy
 ```
 
 `ee` is an alias, so `ee status` and `eunoe status` are the same command.
+
+### Earlier sessions
+
+A different big problem with Claude is that new chats always start cold. eunoe helps you carry an earlier session into it to solve this, run `eunoe
+continue`, pick the session, and paste the copied line into the chat along
+with what you want done. The agent loads the session itself and reads all of
+it before acting: your messages, the key output lines and its earlier
+replies. eunoe never guesses which session you mean or injects one on its own;
+in the benchmark that choice was wrong a third of the time, while the manual
+route remembered 98% of an earlier session's facts and kept 95% of its rules.
+
+The agent is taught three commands in its system prompt and you can run them too:
+
+```sh
+eunoe sessions [words]       # earlier sessions in this directory, newest first or closest to the words
+eunoe load <id>              # write one to ~/.eunoe/loaded/<id>.md for the agent to read whole
+eunoe peek <id> <words>      # just the excerpts that match, for one fact or error
+```
 
 ### Per session
 

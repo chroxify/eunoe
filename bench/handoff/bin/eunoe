@@ -1,0 +1,2 @@
+#!/bin/sh
+exec bun "/Users/christo/Developer/Projects/eunoe/bench/handoff/agent-cli.ts" "$@"

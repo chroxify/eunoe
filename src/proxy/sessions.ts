@@ -14,7 +14,7 @@ function load(): Record<string, SeenSession> {
   }
 }
 
-function cwdOf(sessionFile: string): string | undefined {
+export function cwdOf(sessionFile: string): string | undefined {
   try {
     const fd = openSync(sessionFile, "r")
     const buffer = Buffer.alloc(SESSION_HEAD_BYTES)
@@ -39,6 +39,14 @@ export function recordSession(sessionId: string, mode: Mode, sessionFile: string
     mkdirSync(EUNOE_DIR, { recursive: true })
     writeFileSync(paths.sessions, JSON.stringify(seen, null, 2))
   } catch {}
+}
+
+export function titleOf(sessionFile: string): string | undefined {
+  try {
+    return readFileSync(sessionFile, "utf8").match(/"aiTitle":"((?:[^"\\]|\\.)*)"/)?.[1]
+  } catch {
+    return undefined
+  }
 }
 
 export function seenSessions(): Array<[string, SeenSession]> {

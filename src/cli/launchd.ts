@@ -31,6 +31,10 @@ export function installAgent(program: string[], logFile: string) {
   Bun.spawnSync(["launchctl", "load", PLIST])
 }
 
+export function restartAgent() {
+  Bun.spawnSync(["launchctl", "kickstart", "-k", `gui/${process.getuid?.() ?? ""}/${LAUNCHD_LABEL}`])
+}
+
 export function removeAgent() {
   if (!existsSync(PLIST)) return false
   Bun.spawnSync(["launchctl", "unload", PLIST])

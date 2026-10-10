@@ -16,7 +16,6 @@ function balancedObject(source: string): string | null {
   return null
 }
 
-/** The first JSON object in a model reply: the raw text first, then a fenced block, with trailing commas tolerated. */
 export function extractJson(raw: string): any {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/)
   for (const source of [raw, fenced?.[1]]) {

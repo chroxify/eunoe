@@ -2,31 +2,11 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { resultText } from "../../src/context/content"
 import { toolPairs, turnEvidence } from "../../src/context/evidence"
-import type { EvidenceOptions, Message } from "../../src/context/types"
+import type { Message } from "../../src/context/types"
 import { REREADABLE_TOOLS } from "../../src/context/constants"
-import { COMPONENTS, Tally, TOOL_FACTS, depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
-
-const VARIANTS: Record<string, EvidenceOptions> = {
-  v1: { linesPerCall: 4, turnChars: 1_600, scanLines: 400, minScore: 3, ranked: false, labels: false },
-  default: {},
-  wide: { linesPerCall: 8, turnChars: 3_200 },
-  deep: { scanLines: 1_000_000 },
-  loose: { minScore: 2 },
-  alltools: { allTools: true },
-  "wide+deep": { linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
-  "wide+deep+loose": { linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000, minScore: 2 },
-  "wide+deep+alltools": { linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000, allTools: true },
-  "xwide+deep": { linesPerCall: 12, turnChars: 6_000, scanLines: 1_000_000 },
-  ranked: { ranked: true, linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
-  "ranked+labels": { ranked: true, labels: true, linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
-  "ranked+labels+loose": { ranked: true, labels: true, minScore: 2, linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
-  "ranked+labels+loose 2k": { ranked: true, labels: true, minScore: 2, linesPerCall: 8, turnChars: 2_000, scanLines: 1_000_000 },
-  "ranked+labels+loose 12/4k": { ranked: true, labels: true, minScore: 2, linesPerCall: 12, turnChars: 4_000, scanLines: 1_000_000 },
-  "floor0": { callFloor: 0 },
-  "floor4": { callFloor: 4 },
-  "default 3k": { turnChars: 3_000 },
-  "default 6k": { turnChars: 6_000 },
-}
+import { Tally, depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
+import { COMPONENTS, TOOL_FACTS } from "../lib/constants"
+import { DEPTH_KEYS, EVIDENCE_TYPE_KEYS, EVIDENCE_VARIANTS } from "./constants"
 
 function outputOf(turn: Message[], allTools: boolean): string {
   return toolPairs(turn).filter(({ call }) => allTools || !REREADABLE_TOOLS.has(call.name)).map(({ result }) => resultText(result)).join("\n")
@@ -35,7 +15,7 @@ function outputOf(turn: Message[], allTools: boolean): string {
 const split = process.argv[2]
 const sessions = plantedSessions(split)
 const real = realPoints()
-const names = Object.keys(VARIANTS)
+const names = Object.keys(EVIDENCE_VARIANTS)
 
 const byType = new Map(names.map((n) => [n, new Tally()]))
 const byDepth = new Map(names.map((n) => [n, new Tally()]))
@@ -47,9 +27,9 @@ for (const session of sessions) {
   for (const turn of session.turns) {
     for (const name of names) {
       const c = cost.get(name)!
-      const text = turnEvidence(turn, VARIANTS[name]) ?? ""
+      const text = turnEvidence(turn, EVIDENCE_VARIANTS[name]) ?? ""
       c.evidence += text.length
-      c.output += outputOf(turn, Boolean(VARIANTS[name].allTools)).length
+      c.output += outputOf(turn, Boolean(EVIDENCE_VARIANTS[name].allTools)).length
       c.turns += 1
       c.sizes.push(text.length)
     }
@@ -65,7 +45,7 @@ for (const session of sessions) {
       inOutput += 1
       const label = fact.type === "superseded" ? (plant.value === fact.answer ? "superseded (current)" : "superseded (stale)") : fact.type
       for (const name of names) {
-        const hit = (turnEvidence(turn, VARIANTS[name]) ?? "").includes(plant.value)
+        const hit = (turnEvidence(turn, EVIDENCE_VARIANTS[name]) ?? "").includes(plant.value)
         byType.get(name)!.add(label, hit)
         byType.get(name)!.add("all", hit)
         byDepth.get(name)!.add(depthBucket(fact.ago), hit)
@@ -87,24 +67,22 @@ for (const point of real) {
     if (!near.length || !near.some((t) => mentions(outputOf(t, true), tokens))) continue
     realInOutput += 1
     for (const name of names) {
-      const hit = near.some((t) => mentions(turnEvidence(t, VARIANTS[name]) ?? "", tokens))
+      const hit = near.some((t) => mentions(turnEvidence(t, EVIDENCE_VARIANTS[name]) ?? "", tokens))
       realTally.get(name)!.add(q.type, hit)
       realTally.get(name)!.add("all", hit)
     }
   }
 }
 
-const typeKeys = ["tool_value", "error", "prose_value", "superseded (current)", "superseded (stale)", "all"]
-const depthKeys = ["1–3", "4–10", "11–30", "31–60", "61+"]
 const lines: string[] = []
 lines.push(`# Evidence coverage${split ? ` (${split} split)` : ""}`, "")
 lines.push(`Planted facts placed in tool output: ${placed}; found in that turn's output: ${inOutput} (${pct(inOutput, placed)}). Sessions: ${sessions.length}.`, "")
 lines.push("## Coverage by fact type (planted)", "")
-lines.push(`| variant | ${typeKeys.join(" | ")} |`, `|${"---|".repeat(typeKeys.length + 1)}`)
-for (const name of names) lines.push(`| ${name} | ${typeKeys.map((k) => byType.get(name)!.get(k)).join(" | ")} |`)
+lines.push(`| variant | ${EVIDENCE_TYPE_KEYS.join(" | ")} |`, `|${"---|".repeat(EVIDENCE_TYPE_KEYS.length + 1)}`)
+for (const name of names) lines.push(`| ${name} | ${EVIDENCE_TYPE_KEYS.map((k) => byType.get(name)!.get(k)).join(" | ")} |`)
 lines.push("", "## Coverage by distance from the cut (planted)", "")
-lines.push(`| variant | ${depthKeys.join(" | ")} |`, `|${"---|".repeat(depthKeys.length + 1)}`)
-for (const name of names) lines.push(`| ${name} | ${depthKeys.map((k) => byDepth.get(name)!.get(k)).join(" | ")} |`)
+lines.push(`| variant | ${DEPTH_KEYS.join(" | ")} |`, `|${"---|".repeat(DEPTH_KEYS.length + 1)}`)
+for (const name of names) lines.push(`| ${name} | ${DEPTH_KEYS.map((k) => byDepth.get(name)!.get(k)).join(" | ")} |`)
 lines.push("", "## Cost (every turn of every session)", "")
 lines.push("| variant | evidence chars / turn (mean) | p95 | share of eligible output kept |", "|---|---|---|---|")
 for (const name of names) {

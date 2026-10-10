@@ -4,10 +4,9 @@ import { splitTurns } from "../../src/context/turns"
 import { sizeOf } from "../../src/proxy/estimate"
 import { DEFAULT_RATIO } from "../../src/proxy/constants"
 import type { Message } from "../../src/context/types"
+import { BUDGETS, PLANTED_SESSIONS } from "./constants"
 
-const dir = path.join(import.meta.dir, "..", "out", "planted", "sessions")
-const files = [...new Bun.Glob("s[0-9][0-9].jsonl").scanSync({ cwd: dir, absolute: true })].sort()
-const budgets = [50_000, 100_000, 200_000, 300_000]
+const files = [...new Bun.Glob("s[0-9][0-9].jsonl").scanSync({ cwd: PLANTED_SESSIONS, absolute: true })].sort()
 const keep = Number(process.argv[2] ?? 3)
 
 function load(file: string): Message[] {
@@ -17,12 +16,12 @@ function load(file: string): Message[] {
   })
 }
 
-const rows: Record<number, { steps: number[]; gaps: number[]; live: number[] }> = Object.fromEntries(budgets.map((b) => [b, { steps: [], gaps: [], live: [] }]))
+const rows: Record<number, { steps: number[]; gaps: number[]; live: number[] }> = Object.fromEntries(BUDGETS.map((b) => [b, { steps: [], gaps: [], live: [] }]))
 for (const file of files) {
   const { turns } = splitTurns(load(file))
   const size = (ts: Message[][]) => Math.round(sizeOf({ messages: ts.flat() } as any) * DEFAULT_RATIO)
   const total = size(turns)
-  for (const budget of budgets) {
+  for (const budget of BUDGETS) {
     let cut = 0
     let steps = 0
     let last = 0
@@ -50,7 +49,7 @@ const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.l
 const med = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0 }
 console.log(`keep=${keep}, ${files.length} sessions`)
 console.log("budget | steps/session (mean) | turns between steps (median, mean) | sessions with 0 steps | peak context (median)")
-for (const b of budgets) {
+for (const b of BUDGETS) {
   const r = rows[b]
   console.log(`${b / 1000}k | ${mean(r.steps).toFixed(1)} | ${med(r.gaps)}, ${mean(r.gaps).toFixed(1)} | ${r.steps.filter((s) => s === 0).length} | ${Math.round(med(r.live) / 1000)}k`)
 }

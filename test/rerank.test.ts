@@ -35,9 +35,22 @@ describe("reranked recall", () => {
 
   test("an unreachable reranker falls back to the lexical order", async () => {
     const chunks = recallChunks(history, new Map())
-    const rerank = jevReranker("jev-preview", "nokey", "http://127.0.0.1:9/systemone")
+    const errors: string[] = []
+    const rerank = jevReranker("jev-preview", "nokey", "http://127.0.0.1:9/systemone", (reason) => errors.push(reason))
     const candidates = chunks.map((_, i) => i)
     expect(await rerank("first deploy", chunks, candidates)).toEqual(candidates)
+    expect(errors).toHaveLength(1)
+  })
+
+  test("a billing or auth refusal is reported with its status and error type", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => new Response('{"detail":{"error_type":"billing_error"}}', { status: 402 }) })
+    const errors: string[] = []
+    const rerank = jevReranker("jev-preview", "key", `http://127.0.0.1:${server.port}/systemone`, (reason) => errors.push(reason))
+    const chunks = recallChunks(history, new Map())
+    const candidates = chunks.map((_, i) => i)
+    expect(await rerank("first deploy", chunks, candidates)).toEqual(candidates)
+    expect(errors).toEqual(["402 billing_error"])
+    server.stop(true)
   })
 
   test("prefetch stores the reranked recall so the sync rewrite injects it", async () => {
@@ -46,9 +59,9 @@ describe("reranked recall", () => {
     const input = { body: { messages: history, tools: [{}] }, sessionId: id, config: cfg, transcript: null, window: null, mayCompact: true }
     const calls: string[] = []
     const spy: Reranker = async (query, _c, candidates) => { calls.push(query); return candidates }
-    expect(await prefetchRecall(input, spy)).toBe(true)
+    expect(await prefetchRecall(input, spy)).toMatchObject({ reranked: true, rerankError: null })
     expect(calls).toHaveLength(1)
-    expect(await prefetchRecall(input, spy)).toBe(false)
+    expect(await prefetchRecall(input, spy)).toBeNull()
     const out = rewrite(input)
     expect(JSON.stringify(out.body.messages)).toContain("<recalled-context>")
     expect(JSON.stringify(out.body.messages)).toContain("dpl_first111")

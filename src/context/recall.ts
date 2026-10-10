@@ -1,10 +1,8 @@
-import { BM25_B, BM25_K1, RECALL_LINE_CHARS, RECALL_MAX_CHARS, RECALL_MAX_CHARS_MULTI, RECALL_MIN_TERMS, RECALL_NARRATIVE, RECALL_PER_QUERY, RECALL_RERANK_CANDIDATES, RECALL_SALIENT_EXCERPT, RECALL_SHOWN_LINES, RECALL_WINDOW_LINES, STOPWORDS } from "./constants"
+import { BM25_B, BM25_K1, RECALL_LINE_CHARS, RECALL_MAX_CHARS, RECALL_MAX_CHARS_MULTI, RECALL_MIN_TERMS, RECALL_NARRATIVE, RECALL_PER_QUERY, RECALL_REMINDERS, RECALL_RERANK_CANDIDATES, RECALL_SALIENT_EXCERPT, RECALL_SHOWN_LINES, RECALL_WINDOW_LINES, STOPWORDS } from "./constants"
 import { blocks, clip, describeToolCall, resultText } from "./content"
 import { isSalient, toolPairs } from "./evidence"
 import { isPrompt, splitTurns } from "./turns"
 import type { Message, RecallChunk, RecallOptions, RecallPick, Reranker } from "./types"
-
-const REMINDERS = /<(system-reminder|system-message|recalled-context|tool-evidence)>[\s\S]*?<\/\1>/g
 
 export function terms(text: string): string[] {
   return (text.toLowerCase().match(/[a-z0-9_@$][a-z0-9_.:/@$-]*[a-z0-9_]|[a-z0-9]/g) ?? [])
@@ -13,7 +11,7 @@ export function terms(text: string): string[] {
 }
 
 function promptText(message: Message): string {
-  return blocks(message).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n").replace(REMINDERS, "").trim()
+  return blocks(message).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n").replace(RECALL_REMINDERS, "").trim()
 }
 
 function windows(lines: string[], size: number): string[][] {
@@ -94,6 +92,8 @@ export function pickRecall(prompt: string, chunks: RecallChunk[], options: Recal
   return [...picked.entries()].map(([index, query]) => ({ index, query }))
 }
 
+export const identityReranker: Reranker = async (_query, _chunks, candidates) => candidates
+
 export async function pickRecallWith(prompt: string, chunks: RecallChunk[], rerank: Reranker, options: RecallOptions = {}): Promise<RecallPick[]> {
   const perQuery = options.perQuery ?? RECALL_PER_QUERY
   const width = options.candidates ?? RECALL_RERANK_CANDIDATES
@@ -116,13 +116,14 @@ export function renderRecall(prompt: string, chunks: RecallChunk[], picks: Recal
   let used = 0
   for (const pick of [...picks].sort((a, b) => chunks[a.index].turn - chunks[b.index].turn || a.index - b.index)) {
     const chunk = chunks[pick.index]
-    const entry = `[turn ${chunk.turn}] ${chunk.call}:\n${excerpt(chunk, pick.query, options.salientExcerpt ?? RECALL_SALIENT_EXCERPT).map((l) => `    ${l}`).join("\n")}`
+    const entry = `[${chunk.from ? `${chunk.from}, turn ${chunk.turn}` : `turn ${chunk.turn}`}] ${chunk.call}:\n${excerpt(chunk, pick.query, options.salientExcerpt ?? RECALL_SALIENT_EXCERPT).map((l) => `    ${l}`).join("\n")}`
     if (used + entry.length > budget) continue
     entries.push(entry)
     used += entry.length
   }
+  const where = picks.some((p) => chunks[p.index].from) ? "earlier in this session or in an earlier session on this project" : "earlier in this session"
   return entries.length
-    ? `<recalled-context>\nExcerpts from earlier in this session that match this message: tool output that is no longer in your context, quoted exactly, oldest first. Where the same thing appears twice, the later turn is current. Use them if they answer what was asked; ignore them otherwise.\n\n${entries.join("\n")}\n</recalled-context>`
+    ? `<recalled-context>\nExcerpts from ${where} that match this message: tool output that is no longer in your context, quoted exactly, oldest first. Where the same thing appears twice, the later turn is current. Use them if they answer what was asked; ignore them otherwise.\n\n${entries.join("\n")}\n</recalled-context>`
     : null
 }
 
@@ -138,7 +139,7 @@ export async function recallForWith(prompt: string, chunks: RecallChunk[], reran
 
 export function livePrompt(messages: Message[]): { index: number; text: string } | null {
   const { preamble, turns } = splitTurns(messages)
-  if (turns.length < 2) return null
+  if (turns.length < 1) return null
   const first = turns.at(-1)![0]
   if (!isPrompt(first)) return null
   const index = preamble.length + turns.slice(0, -1).reduce((s, t) => s + t.length, 0)

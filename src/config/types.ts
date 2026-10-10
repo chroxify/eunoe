@@ -13,6 +13,7 @@ export interface RerankConfig {
 }
 
 export interface EvalConfig {
+  recallOptions?: { maxChars?: number; maxCharsMulti?: number; perQuery?: number }
   strategy?: "tail" | "guide" | "trim"
   rolling?: RollingConfig
   tailTurns?: number

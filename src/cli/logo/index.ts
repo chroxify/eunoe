@@ -1,4 +1,4 @@
-import { HALF_BLOCKS, OCTANT_TERMINALS, OCTANTS, TRANSPARENT_PIXEL } from "../constants"
+import { HALF_BLOCKS, LOGO_MISMATCH, OCTANT_TERMINALS, OCTANTS, TRANSPARENT_PIXEL } from "../constants"
 import { trueColor, useColor } from "../ui"
 import { LOGO_KEYS, LOGO_PALETTE, LOGO_PIXELS } from "./pixels"
 
@@ -8,8 +8,6 @@ type Pixel = Rgb | null
 const rgb = (hex: string): Rgb => [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16)) as Rgb
 
 const toCube = (value: number) => (value < 48 ? 0 : value < 115 ? 1 : Math.min(5, Math.round((value - 35) / 40)))
-
-const MISMATCH = 3 * 255 ** 2
 
 function sgr(color: Rgb, layer: "fg" | "bg") {
   const base = layer === "fg" ? 38 : 48
@@ -24,7 +22,7 @@ function pixel(key: string | undefined): Pixel {
 }
 
 function distance(a: Pixel, b: Pixel) {
-  if (!a || !b) return a === b ? 0 : MISMATCH
+  if (!a || !b) return a === b ? 0 : LOGO_MISMATCH
   return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
 }
 

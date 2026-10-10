@@ -7,3 +7,7 @@ bench/out/
 
 # Local qmd search indexes.
 .qmd/
+
+.kanna
+
+launch/

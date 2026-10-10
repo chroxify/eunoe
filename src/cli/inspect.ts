@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
 import { claudeConfigDirs } from "../config"
 import { paths } from "../config/constants"
@@ -15,6 +15,25 @@ export async function probe(port: number): Promise<Health | null> {
     return response.ok ? await response.json() as Health : null
   } catch {
     return null
+  }
+}
+
+function newestSource(dir: string): number {
+  let newest = 0
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name)
+    if (entry.isDirectory()) newest = Math.max(newest, newestSource(file))
+    else if (entry.name.endsWith(".ts")) newest = Math.max(newest, statSync(file).mtimeMs)
+  }
+  return newest
+}
+
+export function runsStaleCode(health: Health | null): boolean {
+  if (!health?.startedAt) return health !== null
+  try {
+    return newestSource(path.join(import.meta.dir, "..")) > health.startedAt
+  } catch {
+    return false
   }
 }
 

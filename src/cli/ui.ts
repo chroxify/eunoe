@@ -1,5 +1,5 @@
 import { homedir } from "node:os"
-import { TYPO_DISTANCE } from "./constants"
+import { TOKEN_UNITS, TYPO_DISTANCE } from "./constants"
 
 const colorFor = (stream: NodeJS.WriteStream) => Boolean(stream.isTTY) && !process.env.NO_COLOR && process.env.TERM !== "dumb"
 export const useColor = colorFor(process.stdout)
@@ -74,8 +74,11 @@ export function tilde(file: string) {
 }
 
 export function tokens(count: number) {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count >= 10_000_000 ? 0 : 1)}M`
-  if (count >= 1_000) return `${(count / 1_000).toFixed(count >= 10_000 ? 0 : 1)}k`
+  for (const [scale, suffix] of TOKEN_UNITS) {
+    const scaled = count / scale
+    const shown = scaled.toFixed(scaled >= 10 ? 0 : 1)
+    if (Number(shown) >= 1) return `${shown}${suffix}`
+  }
   return String(count)
 }
 

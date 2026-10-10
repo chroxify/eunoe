@@ -6,10 +6,7 @@ import { splitTurns } from "../../src/context/turns"
 import type { Message } from "../../src/context/types"
 import { findSessionFile } from "../../src/transcript/locate"
 import { sessionMessages } from "../../src/transcript/messages"
-
-export const OUT = path.join(import.meta.dir, "..", "out", "planted")
-export const COMPONENTS = path.join(import.meta.dir, "..", "out", "evals")
-const REAL = path.join(import.meta.dir, "..", "out", "real")
+import { PLANTED_OUT, REAL_OUT } from "./constants"
 
 export interface Plant { turn: number; value: string }
 export interface Fact { id: string; type: string; answer: string; stale?: string; plants: Plant[]; question: string; ago: number }
@@ -17,10 +14,8 @@ export interface PlantedSession { id: string; split: string; turns: Message[][];
 export interface RealQuestion { id: number; type: string; turnsAgo: number; question: string; answer: string }
 export interface RealPoint { tag: string; kind: string; turns: Message[][]; messages: Message[]; questions: RealQuestion[] }
 
-export const TOOL_FACTS = new Set(["tool_value", "error", "superseded", "prose_value"])
-
 export function plantedSessions(split?: string): PlantedSession[] {
-  const dir = path.join(OUT, "sessions")
+  const dir = path.join(PLANTED_OUT, "sessions")
   return [...new Bun.Glob("s[0-9][0-9].meta.json").scanSync({ cwd: dir, absolute: true })].sort().flatMap((metaFile) => {
     const meta = JSON.parse(readFileSync(metaFile, "utf8"))
     if (split && meta.split !== split) return []
@@ -39,10 +34,10 @@ function configDirs(): string[] {
 }
 
 export function realPoints(): RealPoint[] {
-  const points = JSON.parse(readFileSync(path.join(REAL, "points.json"), "utf8")) as Array<{ tag: string; kind: string; session: string; cutLine: number }>
+  const points = JSON.parse(readFileSync(path.join(REAL_OUT, "points.json"), "utf8")) as Array<{ tag: string; kind: string; session: string; cutLine: number }>
   const dirs = configDirs()
   return points.flatMap((point) => {
-    const qFile = path.join(REAL, `${point.tag}.questions.json`)
+    const qFile = path.join(REAL_OUT, `${point.tag}.questions.json`)
     const file = findSessionFile(point.session, dirs)
     if (!file || !existsSync(qFile)) return []
     const messages: Message[] = []

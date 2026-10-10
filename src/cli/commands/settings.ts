@@ -1,13 +1,11 @@
 import { loadConfig, overrides, parseTunable, saveConfig } from "../../config"
 import { DEFAULTS, TUNABLES } from "../../config/constants"
 import type { Tunable } from "../../config/types"
-import { TUNABLE_DESCRIPTIONS, TUNABLE_HINTS } from "../constants"
+import { SETTING_RESET, TUNABLE_DESCRIPTIONS, TUNABLE_HINTS } from "../constants"
 import { input, interactive, select } from "../prompt"
 import { sessionArgs, shortId } from "../sessions"
 import type { Command } from "../types"
 import { c, fail, line, ok, rows } from "../ui"
-
-const RESET = "default"
 
 function listSettings() {
   const config = loadConfig()
@@ -28,8 +26,8 @@ function listSettings() {
 
 function applySetting(name: Tunable, raw: string, ids: string[]) {
   const config = loadConfig()
-  if (raw === RESET) {
-    if (!ids.length) fail(`\`${RESET}\` only applies with --session`, `eunoe settings set ${name} ${RESET} --session <id>`)
+  if (raw === SETTING_RESET) {
+    if (!ids.length) fail(`\`${SETTING_RESET}\` only applies with --session`, `eunoe settings set ${name} ${SETTING_RESET} --session <id>`)
     const sessions = { ...config.sessions }
     for (const id of ids) {
       if (!sessions[id]) continue
@@ -70,7 +68,7 @@ export const settings: Command = {
     "Without arguments it opens a picker. Keys:",
     ...TUNABLES.map((key) => `  ${key.padEnd(10)} ${TUNABLE_DESCRIPTIONS[key]} ${c.dim(`(${TUNABLE_HINTS[key]})`)}`),
     "",
-    `With --session, the value applies to that session only; \`${RESET}\` removes its own value.`,
+    `With --session, the value applies to that session only; \`${SETTING_RESET}\` removes its own value.`,
     "Takes effect on the next request; no restart needed.",
   ],
   options: [["--session <id>", "Change it for just this session (repeatable; a unique prefix is enough)"]],

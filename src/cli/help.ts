@@ -1,5 +1,5 @@
 import { VERSION } from "../version"
-import { GLOBAL_OPTIONS, TAGLINE } from "./constants"
+import { COMMAND_GROUPS, GLOBAL_OPTIONS, TAGLINE } from "./constants"
 import { withLogo } from "./logo"
 import type { Command } from "./types"
 import { c, line } from "./ui"
@@ -12,9 +12,16 @@ export function printHelp(commands: Record<string, Command>) {
   line(`  ${c.dim("Usage")}`)
   line(`    eunoe ${c.cyan("<command>")} ${c.dim("[options]")}`)
   line()
-  line(`  ${c.dim("Commands")}`)
-  for (const [name, command] of Object.entries(commands).filter(([, command]) => !command.hidden)) line(`    ${c.cyan(name.padEnd(width))}   ${command.summary}`)
-  line()
+  const visible = Object.keys(commands).filter((name) => !commands[name].hidden)
+  const grouped = new Set(COMMAND_GROUPS.flatMap(([, names]) => names))
+  const groups = [...COMMAND_GROUPS, ["Other", visible.filter((name) => !grouped.has(name))] as [string, string[]]]
+  for (const [title, names] of groups) {
+    const shown = names.filter((name) => visible.includes(name))
+    if (!shown.length) continue
+    line(`  ${c.dim(title)}`)
+    for (const name of shown) line(`    ${c.cyan(name.padEnd(width))}   ${commands[name].summary}`)
+    line()
+  }
   line(`  ${c.dim("Options")}`)
   for (const [flag, description] of GLOBAL_OPTIONS) line(`    ${flag.padEnd(width)}   ${description}`)
   line()

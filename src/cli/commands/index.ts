@@ -1,6 +1,10 @@
 import type { Command } from "../types"
+import { continueSession } from "./continue"
+import { load } from "./load"
 import { mode } from "./mode"
+import { peek } from "./peek"
 import { serve } from "./serve"
+import { sessions } from "./sessions"
 import { settings } from "./settings"
 import { start } from "./start"
 import { status } from "./status"
@@ -15,6 +19,10 @@ export const commands: Record<string, Command> = {
   mode,
   settings,
   status,
+  sessions,
+  peek,
+  load,
+  continue: continueSession,
   uninstall,
   serve,
   enable: alias(start),

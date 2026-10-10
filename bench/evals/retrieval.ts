@@ -1,38 +1,21 @@
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { homedir } from "node:os"
 import path from "node:path"
+import { claude } from "../lib/claude"
+import { COMPONENTS, NO_TOOLS, OUT, TOOL_FACTS } from "../lib/constants"
 import { rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
 import type { RecallChunk, RecallPick } from "../../src/context/types"
-import { COMPONENTS, Tally, TOOL_FACTS, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
+import { Tally, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
 import { jev, jevStats } from "../lib/jev"
+import { CROSS_ENCODERS, EMBEDDERS, EMBED_CACHE, JEV_TERM_POOL, PARAPHRASE, PARAPHRASE_FILE, PLANTED_KEYS, REAL_KEYS, RETRIEVAL_ARM_FILTER, RETRIEVAL_CANDIDATES, RETRIEVAL_TOP } from "./constants"
 
 type Ranker = (question: string, chunks: RecallChunk[], corpusKey: string) => Promise<number[]>
 interface Arm { name: string; rank: Ranker; prepare?: (chunks: RecallChunk[], corpusKey: string) => Promise<void> }
 
-const TOP = Number(process.env.RETRIEVAL_TOP ?? 12)
-const CANDIDATES = Number(process.env.RETRIEVAL_CANDIDATES ?? 30)
 const split = process.argv[2] ?? "all"
-const armFilter = (process.env.RETRIEVAL_ARMS ?? "").split(",").filter(Boolean)
-const CACHE = path.join(COMPONENTS, "embed-cache")
-const API_KEY_FILE = path.join(homedir(), ".config", "eunoe-bench", "api-key")
 
 const chunkText = (c: RecallChunk) => `${c.call}\n${c.lines.join("\n")}`.slice(0, 1_200)
 const corpusHash = (chunks: RecallChunk[]) => createHash("sha1").update(chunks.map(chunkText).join("\u0000")).digest("hex").slice(0, 12)
-
-const EMBEDDERS: Record<string, { model: string; query: string; doc: string; pooling: "mean" | "cls"; dtype?: string }> = {
-  minilm: { model: "Xenova/all-MiniLM-L6-v2", query: "", doc: "", pooling: "mean" },
-  "bge-small": { model: "Xenova/bge-small-en-v1.5", query: "Represent this sentence for searching relevant passages: ", doc: "", pooling: "cls" },
-  "bge-base": { model: "Xenova/bge-base-en-v1.5", query: "Represent this sentence for searching relevant passages: ", doc: "", pooling: "cls" },
-  "e5-small": { model: "Xenova/e5-small-v2", query: "query: ", doc: "passage: ", pooling: "mean" },
-  "gte-small": { model: "Xenova/gte-small", query: "", doc: "", pooling: "mean" },
-  nomic: { model: "nomic-ai/nomic-embed-text-v1.5", query: "search_query: ", doc: "search_document: ", pooling: "mean", dtype: "fp32" },
-}
-const CROSS_ENCODERS: Record<string, string> = {
-  "ce-minilm": "Xenova/ms-marco-MiniLM-L-6-v2",
-  "ce-bge": "Xenova/bge-reranker-base",
-  "ce-mxbai": "mixedbread-ai/mxbai-rerank-xsmall-v1",
-}
 
 const transformers = () => import(path.join(import.meta.dir, "..", "tools", "models", "node_modules", "@huggingface", "transformers", "dist", "transformers.node.mjs"))
 
@@ -63,7 +46,7 @@ const docCache = new Map<string, Float32Array[]>()
 async function docVectors(key: string, chunks: RecallChunk[], corpusKey: string): Promise<Float32Array[]> {
   const id = `${key}:${corpusKey}`
   if (docCache.has(id)) return docCache.get(id)!
-  const dir = path.join(CACHE, key)
+  const dir = path.join(EMBED_CACHE, key)
   mkdirSync(dir, { recursive: true })
   const file = path.join(dir, `${corpusKey}.bin`)
   let vectors: Float32Array[]
@@ -123,7 +106,7 @@ async function crossEncoder(key: string) {
 
 function ceRerank(key: string, base: Ranker = bm25Rank()): Ranker {
   return async (question, chunks, corpusKey) => {
-    const candidates = (await base(question, chunks, corpusKey)).slice(0, CANDIDATES)
+    const candidates = (await base(question, chunks, corpusKey)).slice(0, RETRIEVAL_CANDIDATES)
     if (!candidates.length) return []
     const { tokenizer, model } = await crossEncoder(key)
     const scores: number[] = []
@@ -155,16 +138,11 @@ async function llmPick(model: string, question: string, chunks: RecallChunk[], c
   return picked
 }
 
-async function anthropic(model: string, prompt: string, maxTokens = 60): Promise<string> {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "x-api-key": readFileSync(API_KEY_FILE, "utf8").trim(), "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
-  })
-  const json: any = await response.json()
-  if (!response.ok) throw new Error(JSON.stringify(json).slice(0, 300))
-  llmTokens.set(model, (llmTokens.get(model) ?? 0) + (json.usage?.input_tokens ?? 0))
-  return json.content?.[0]?.text ?? ""
+async function anthropic(model: string, prompt: string, maxTokens = 400): Promise<string> {
+  const out = await claude(["--model", model, ...NO_TOOLS], { cwd: OUT, stdin: prompt })
+  const text = String(out.result ?? "")
+  if (out.is_error || /credit balance|rate limit|limit reached/i.test(text.slice(0, 200))) throw new Error(text.slice(0, 200))
+  return text.slice(0, maxTokens * 6)
 }
 
 async function ollama(model: string, prompt: string): Promise<string> {
@@ -176,7 +154,7 @@ async function ollama(model: string, prompt: string): Promise<string> {
 
 function llmRerank(label: string, call: (prompt: string) => Promise<string>, pick = 4, base: Ranker = bm25Rank()): Ranker {
   return async (question, chunks, corpusKey) => {
-    const candidates = (await base(question, chunks, corpusKey)).slice(0, CANDIDATES)
+    const candidates = (await base(question, chunks, corpusKey)).slice(0, RETRIEVAL_CANDIDATES)
     if (!candidates.length) return []
     const picked = await llmPick(label, question, chunks, candidates, pick, call)
     return [...picked, ...candidates.filter((c) => !picked.includes(c))]
@@ -186,7 +164,7 @@ function llmRerank(label: string, call: (prompt: string) => Promise<string>, pic
 function jevRerank(model: string, base: Ranker = bm25Rank()): Ranker {
   const label = model
   return async (question, chunks, corpusKey) => {
-    const candidates = (await base(question, chunks, corpusKey)).slice(0, CANDIDATES)
+    const candidates = (await base(question, chunks, corpusKey)).slice(0, RETRIEVAL_CANDIDATES)
     if (!candidates.length) return []
     const file = llmCacheFile(label)
     llmCache[label] ??= existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {}
@@ -209,6 +187,43 @@ function jevRerank(model: string, base: Ranker = bm25Rank()): Ranker {
 }
 
 const rewriteCache: Record<string, string> = existsSync(path.join(COMPONENTS, "rewrite-cache.json")) ? JSON.parse(readFileSync(path.join(COMPONENTS, "rewrite-cache.json"), "utf8")) : {}
+async function rewritten(model: string, question: string): Promise<string> {
+  const key = `${model}\n${question}`
+  if (!rewriteCache[key]) {
+    rewriteCache[key] = await anthropic(model, `A developer asks a question about an earlier coding session. Write the words most likely to appear in the exact command output or log line that answers it: command names, flags, file names, identifiers, error words, units. One line, 8–20 words, no punctuation, no explanation.\n\nQuestion: ${question}`, 80)
+    writeFileSync(path.join(COMPONENTS, "rewrite-cache.json"), JSON.stringify(rewriteCache))
+    llmCalls.set(`rewrite:${model}`, (llmCalls.get(`rewrite:${model}`) ?? 0) + 1)
+  }
+  return `${question} ${rewriteCache[key]}`
+}
+
+async function jevRewritten(question: string, chunks: RecallChunk[]): Promise<string> {
+  const key = `jev-rewrite\n${question}`
+  if (!rewriteCache[key]) {
+    const df = new Map<string, number>()
+    for (const c of chunks) for (const t of new Set(c.terms)) df.set(t, (df.get(t) ?? 0) + 1)
+    const pool = [...df.entries()].filter(([t, n]) => n >= 2 && n <= chunks.length / 4 && t.length >= 4).sort((a, b) => b[1] - a[1]).slice(0, 400).map(([t]) => t)
+    const chosen: string[] = []
+    for (let i = 0; i < pool.length; i += JEV_TERM_POOL) {
+      const block = pool.slice(i, i + JEV_TERM_POOL)
+      const answers = await jev("jev-latest", `Question from a developer about an earlier coding session: "${question}"`, Object.fromEntries(block.map((t) => [t.replace(/[^\w]/g, "_"), { type: "noul", instructions: `The term "${t}" is likely to appear in the exact command output or log line that answers the question` }])))
+      for (const t of block) { const a = answers[t.replace(/[^\w]/g, "_")]; if (a && a.type === "noul" && a.noul >= 0.6) chosen.push(t) }
+    }
+    rewriteCache[key] = chosen.slice(0, 20).join(" ")
+    writeFileSync(path.join(COMPONENTS, "rewrite-cache.json"), JSON.stringify(rewriteCache))
+    llmCalls.set("rewrite:jev", (llmCalls.get("rewrite:jev") ?? 0) + Math.ceil(pool.length / JEV_TERM_POOL))
+  }
+  return `${question} ${rewriteCache[key]}`
+}
+
+function jevRewriteThen(base: Ranker): Ranker {
+  return async (question, chunks, corpusKey) => base(await jevRewritten(question, chunks), chunks, corpusKey)
+}
+
+function rewriteThen(model: string, base: Ranker): Ranker {
+  return async (question, chunks, corpusKey) => base(await rewritten(model, question), chunks, corpusKey)
+}
+
 function rewriteThenBm25(model: string): Ranker {
   return async (question, chunks) => {
     const key = `${model}\n${question}`
@@ -237,11 +252,16 @@ const ARMS: Arm[] = [
   { name: "haiku rerank over hybrid:bge-small", rank: llmRerank("claude-haiku-4-5-20251001", (p) => anthropic("claude-haiku-4-5-20251001", p), 4, hybrid("bge-small")) },
   { name: "sonnet rerank", rank: llmRerank("claude-sonnet-5-5", (p) => anthropic("claude-sonnet-5-5", p)) },
   { name: "haiku rewrite → bm25", rank: rewriteThenBm25("claude-haiku-4-5-20251001") },
+  { name: "haiku rewrite → hybrid:e5-small", rank: rewriteThen("claude-haiku-4-5-20251001", hybrid("e5-small")) },
+  { name: "haiku rewrite → hybrid:e5-small → jev", rank: jevRerank("jev-latest", rewriteThen("claude-haiku-4-5-20251001", hybrid("e5-small"))) },
+  { name: "haiku rewrite → bm25 → jev", rank: jevRerank("jev-latest", rewriteThenBm25("claude-haiku-4-5-20251001")) },
+  { name: "jev rewrite → bm25", rank: jevRewriteThen(bm25Rank()) },
+  { name: "jev rewrite → hybrid:e5-small → jev", rank: jevRerank("jev-latest", jevRewriteThen(hybrid("e5-small"))) },
   ...(process.env.OLLAMA_MODELS ?? "").split(",").filter(Boolean).map((m) => ({ name: `ollama:${m} rerank`, rank: llmRerank(`ollama_${m}`, (p) => ollama(m, p)) })),
-  ...(process.env.JEV_MODELS ?? "jev-latest").split(",").filter(Boolean).flatMap((m) => [{ name: `${m} rerank`, rank: jevRerank(m) }, { name: `${m} rerank over hybrid:bge-small`, rank: jevRerank(m, hybrid("bge-small")) }]),
-].filter((a) => !armFilter.length || armFilter.some((f) => a.name.includes(f)))
+  ...(process.env.JEV_MODELS ?? "jev-latest").split(",").filter(Boolean).flatMap((m) => [{ name: `${m} rerank`, rank: jevRerank(m) }, { name: `${m} rerank over hybrid:bge-small`, rank: jevRerank(m, hybrid("bge-small")) }, { name: `${m} rerank over hybrid:e5-small`, rank: jevRerank(m, hybrid("e5-small")) }]),
+].filter((a) => !RETRIEVAL_ARM_FILTER.length || RETRIEVAL_ARM_FILTER.includes(a.name))
 
-interface Ask { question: string; hit: (text: string) => boolean; type: string; corpusKey: string; chunks: RecallChunk[]; planted: boolean }
+interface Ask { question: string; original?: string; hit: (text: string) => boolean; type: string; corpusKey: string; chunks: RecallChunk[]; planted: boolean }
 const asks: Ask[] = []
 for (const session of plantedSessions(split === "all" ? undefined : split)) {
   const chunks = recallChunks([...session.messages, { role: "user", content: "" }], new Map())
@@ -262,6 +282,28 @@ for (const point of realPoints()) {
     asks.push({ question: q.question, hit: (t) => mentions(t, tokens), type: q.type, corpusKey, chunks, planted: false })
   }
 }
+const paraphrases: Record<string, string> = existsSync(PARAPHRASE_FILE) ? JSON.parse(readFileSync(PARAPHRASE_FILE, "utf8")) : {}
+if (PARAPHRASE) {
+  for (const ask of asks) {
+    const source = ask.chunks.filter((c) => ask.hit(c.lines.join("\n"))).map(chunkText).join("\n---\n").slice(0, 3_000)
+    const key = createHash("sha1").update(`${ask.question}\u0000${source}`).digest("hex").slice(0, 16)
+    if (!paraphrases[key]) {
+      const avoid = [...new Set([...terms(ask.question), ...terms(source)])].join(" ")
+      let text = ""
+      for (let attempt = 0; attempt < 3 && !text; attempt += 1) {
+        const candidate = (await anthropic("claude-opus-5-5", `A developer is asking their coding agent about something from much earlier in a long session. Rewrite the question below the way a person would actually phrase it from vague memory: casual, hedged, describing the situation in everyday words rather than naming it. Keep the meaning so the same fact answers it. Hard rule: do not use any of these words or obvious variants of them: ${avoid}\n\nQuestion: ${ask.question}\n\nRewritten question only, one line.`, 600)).trim().replace(/^"|"$/g, "")
+        const overlap = terms(candidate).filter((t) => avoid.split(" ").includes(t))
+        if (!overlap.length || attempt === 2) text = candidate
+      }
+      paraphrases[key] = text
+      writeFileSync(PARAPHRASE_FILE, JSON.stringify(paraphrases, null, 1))
+    }
+    ask.original = ask.question
+    ask.question = paraphrases[key]
+  }
+  const overlapping = asks.filter((a) => terms(a.question).some((t) => a.chunks.filter((c) => a.hit(c.lines.join("\n"))).some((c) => terms(chunkText(c)).includes(t)))).length
+  console.error(`paraphrased ${asks.length} questions; ${overlapping} still share a content term with their source chunk`)
+}
 console.error(`${asks.length} questions (${asks.filter((a) => a.planted).length} planted, ${asks.filter((a) => !a.planted).length} real), ${[...new Set(asks.map((a) => a.corpusKey))].length} corpora, ${[...new Map(asks.map((a) => [a.corpusKey, a.chunks.length])).values()].reduce((s, n) => s + n, 0)} chunks; arms: ${ARMS.map((a) => a.name).join(", ")}`)
 
 const results: Record<string, { planted: Tally; real: Tally; cand12: Tally; cand30: Tally; ms: number[]; chars: number[] }> = {}
@@ -275,10 +317,10 @@ for (const arm of ARMS) {
     try { ranked = await arm.rank(ask.question, ask.chunks, ask.corpusKey) } catch (e) { console.error(`${arm.name}: ${String(e).slice(0, 200)}`); break }
     r.ms.push(performance.now() - t0)
     const holds = (i: number) => ask.hit(ask.chunks[i].lines.join("\n"))
-    r.cand12.add(ask.planted ? "planted" : "real", ranked.slice(0, TOP).some(holds))
-    r.cand30.add(ask.planted ? "planted" : "real", ranked.slice(0, CANDIDATES).some(holds))
+    r.cand12.add(ask.planted ? "planted" : "real", ranked.slice(0, RETRIEVAL_TOP).some(holds))
+    r.cand30.add(ask.planted ? "planted" : "real", ranked.slice(0, RETRIEVAL_CANDIDATES).some(holds))
     const q = new Set(terms(ask.question))
-    const picks: RecallPick[] = ranked.slice(0, TOP).map((index) => ({ index, query: q }))
+    const picks: RecallPick[] = ranked.slice(0, RETRIEVAL_TOP).map((index) => ({ index, query: q }))
     const injected = renderRecall(ask.question, ask.chunks, picks) ?? ""
     r.chars.push(injected.length)
     const hit = ask.hit(injected)
@@ -291,16 +333,14 @@ for (const arm of ARMS) {
 }
 
 function med(xs: number[]) { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0 }
-const plantedKeys = ["tool_value", "error", "prose_value", "superseded", "all"]
-const realKeys = ["tool_evidence", "recent", "mid_history", "decision", "instruction", "all"]
 const lines: string[] = []
-lines.push(`# Recall retrieval: rankers compared (${split})`, "")
-lines.push(`Same corpus (6-line windows + agent narrative), same rendering (top ${TOP}, salient excerpt, default budgets), same exact-match hit. Rerankers re-order the base ranker's top ${CANDIDATES}. ${asks.filter((a) => a.planted).length} planted questions, ${asks.filter((a) => !a.planted).length} real.`, "")
+lines.push(`# Recall retrieval: rankers compared (${split}${PARAPHRASE ? ", paraphrased questions" : ""})`, "")
+lines.push(`Same corpus (6-line windows + agent narrative), same rendering (top ${RETRIEVAL_TOP}, salient excerpt, default budgets), same exact-match hit. Rerankers re-order the base ranker's top ${RETRIEVAL_CANDIDATES}. ${asks.filter((a) => a.planted).length} planted questions, ${asks.filter((a) => !a.planted).length} real.`, "")
 lines.push("## Hit rate inside the injected context", "")
-lines.push(`| arm | planted ${plantedKeys.join(" | ")} | real ${realKeys.join(" | ")} |`, `|${"---|".repeat(plantedKeys.length + realKeys.length + 1)}`)
-for (const [name, r] of Object.entries(results)) lines.push(`| ${name} | ${plantedKeys.map((k) => r.planted.get(k)).join(" | ")} | ${realKeys.map((k) => r.real.get(k)).join(" | ")} |`)
+lines.push(`| arm | planted ${PLANTED_KEYS.join(" | ")} | real ${REAL_KEYS.join(" | ")} |`, `|${"---|".repeat(PLANTED_KEYS.length + REAL_KEYS.length + 1)}`)
+for (const [name, r] of Object.entries(results)) lines.push(`| ${name} | ${PLANTED_KEYS.map((k) => r.planted.get(k)).join(" | ")} | ${REAL_KEYS.map((k) => r.real.get(k)).join(" | ")} |`)
 lines.push("", "## Ranking quality and cost", "")
-lines.push(`| arm | answer within top ${TOP} (planted / real) | within top ${CANDIDATES} (planted / real) | ms per query (median / p95) | injected chars (median) | index ms per 1k chunks | model calls | input tokens |`, "|---|---|---|---|---|---|---|---|")
+lines.push(`| arm | answer within top ${RETRIEVAL_TOP} (planted / real) | within top ${RETRIEVAL_CANDIDATES} (planted / real) | ms per query (median / p95) | injected chars (median) | index ms per 1k chunks | model calls | input tokens |`, "|---|---|---|---|---|---|---|---|")
 for (const [name, r] of Object.entries(results)) {
   const sorted = [...r.ms].sort((a, b) => a - b)
   const key = name.replace(/^(dense|hybrid):/, "")
@@ -310,7 +350,7 @@ for (const [name, r] of Object.entries(results)) {
   lines.push(`| ${name} | ${r.cand12.get("planted")} / ${r.cand12.get("real")} | ${r.cand30.get("planted")} / ${r.cand30.get("real")} | ${med(r.ms).toFixed(0)} / ${(sorted[Math.floor(sorted.length * 0.95)] ?? 0).toFixed(0)} | ${med(r.chars)} | ${idx} | ${model ? (jv ? jv.calls : llmCalls.get(model) ?? 0) : "–"} | ${model ? (jv ? jv.tokens : llmTokens.get(model.replace(/^rewrite:/, "")) ?? "–") : "–"} |`)
 }
 mkdirSync(COMPONENTS, { recursive: true })
-const out = path.join(COMPONENTS, `retrieval.${split}${armFilter.length ? `.${armFilter.join("+").replace(/[^\w+-]/g, "_")}` : ""}.md`)
+const out = path.join(COMPONENTS, `retrieval.${split}${PARAPHRASE ? ".paraphrase" : ""}${RETRIEVAL_ARM_FILTER.length ? `.${RETRIEVAL_ARM_FILTER.join("+").replace(/[^\w+-]/g, "_")}` : ""}.md`)
 writeFileSync(out, lines.join("\n") + "\n")
 console.log(lines.join("\n"))
 console.log(`\nwritten ${out}`)

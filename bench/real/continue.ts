@@ -1,42 +1,21 @@
-/**
- * Tier 2 of the real-session suite: continuation. Recall is a proxy; this is the thing.
- *
- * For each chosen point the user's real next message is replayed to every
- * arm, which works one turn in its own git worktree of the project, checked
- * out at the last commit before the cut. Outward-facing commands (push,
- * publish, deploy) are denied. Each turn is judged against what the real agent
- * did next, with the standing instructions an oracle extracted from the
- * pre-cut history, and every diff and turn transcript is kept.
- *
- *   bun bench/real/continue.ts [points=20] [parallel=2]
- *
- * Runs after `real/run.ts run`: it reuses the point list, the transcript copies
- * and native's post-compaction session from the recall tier.
- */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 import { extractJson } from "../lib/json"
 import { armSpec } from "../arms"
-import { BASE_SETTINGS, NO_TOOLS, claude, projectDir } from "../lib/claude"
+import { claude, projectDir } from "../lib/claude"
+import { BASE_SETTINGS, NO_TOOLS } from "../lib/constants"
 import { blocks, clean, parse, realPrompt, textOf, type Entry } from "../lib/points"
 import {
-  ANSWER_MODEL, ARMS, JUDGES, OUT, PROXIES, choosePoints, proxyFor, proxyRequests, repointSummary, seededShuffle, shrinkUsage, sourceMaterial,
+  choosePoints, proxyFor, proxyRequests, repointSummary, seededShuffle, shrinkUsage, sourceMaterial,
   startProxies, writeCopy, type Arm, type BenchPoint,
 } from "./run"
+import { ANSWER_MODEL, CONTINUATION_JUDGE, CONT_ARMS, DENIED, INSTRUCTIONS, JUDGES, KEEP, MAX_TURNS, OUT, PROXIES, TOOLS, WORK } from "./constants"
 
 const TOTAL = Number(process.argv[2] ?? 20)
 const PARALLEL = Number(process.argv[3] ?? 2)
-const WORK = path.join(OUT, "worktrees")
-const KEEP = path.join(OUT, "continuation")
-const MAX_TURNS = 60
-const CONT_ARMS = ARMS.filter((a) => a !== "full")
-const TOOLS = "Bash Read Edit Write MultiEdit NotebookEdit Glob Grep WebFetch"
-const DENIED = "Bash(git push:*) Bash(gh:*) Bash(npm publish:*) Bash(bun publish:*) Bash(pnpm publish:*) Bash(yarn publish:*) Bash(vercel:*) Bash(wrangler:*) Bash(fly:*) Bash(eas:*) Bash(xcrun altool:*) Bash(xcrun notarytool:*) Bash(fastlane:*) Bash(kubectl:*) Bash(terraform:*) Bash(docker push:*) Bash(curl -X POST:*) Bash(curl --data:*) Agent Task WebSearch"
 mkdirSync(KEEP, { recursive: true })
 mkdirSync(WORK, { recursive: true })
-
-// ---------------------------------------------------------------- selection
 
 interface ContPoint extends BenchPoint {
   tag: string
@@ -70,8 +49,6 @@ function chooseContinuation(): ContPoint[] {
   return [...richest("real").slice(0, TOTAL - synthetic.length), ...synthetic].slice(0, TOTAL).sort((a, b) => a.tag.localeCompare(b.tag))
 }
 
-// ---------------------------------------------------------------- the real next turn
-
 function nextTurn(point: BenchPoint) {
   const entries = parse(point.lines)
   let promptIndex = -1
@@ -98,8 +75,6 @@ function nextTurn(point: BenchPoint) {
   const stamp = entries[promptIndex].timestamp ?? entries[point.cutLine]?.timestamp
   return { prompt, reference: turn.join("\n").slice(0, 14_000), filesTouched: [...files], timestamp: stamp as string | undefined, branch: entries[promptIndex].gitBranch as string | undefined }
 }
-
-// ---------------------------------------------------------------- worktrees
 
 function commitBefore(cwd: string, timestamp: string | undefined, branch: string | undefined) {
   const candidates = [branch, "HEAD"].filter(Boolean) as string[]
@@ -131,45 +106,6 @@ function diffOf(dir: string) {
   return { status, diff: diff.slice(0, 200_000) }
 }
 
-// ---------------------------------------------------------------- prompts
-
-const INSTRUCTIONS = (material: string, claudeMd: string) => `Below is the complete history of a coding session up to the moment its context filled, followed by the CLAUDE.md files that applied to it.
-
-List every standing instruction that was still in force at that moment: things the user told the agent to do or not do (commit or not, which package manager, where to deploy, how to write replies, what to leave alone), rules loaded from a skill the agent invoked, and rules from CLAUDE.md. Only instructions a continuing agent could violate in its very next turn. Each as one short line, with its source.
-
-Return only JSON: {"instructions":[{"id":1,"source":"user|skill|claude_md","text":"..."}, ...]}
-
-=== CLAUDE.md ===
-${claudeMd.slice(0, 20_000) || "(none)"}
-
-=== SESSION HISTORY ===
-${material}`
-
-const JUDGE = (prompt: string, reference: string, instructions: any[], sets: Record<string, string>) => `A coding session was compacted and then continued by several agents. You get the user's next message, what the REAL agent did in response at the time (the reference), the standing instructions active at that moment, and what each agent did on the same message after compaction.
-
-Score each agent:
-  "fidelity": 2 = it did what the real continuation did, or something defensibly equivalent given the same instruction · 1 = partly, or headed the right way but stopped short or drifted · 0 = did something else, did nothing useful, or asked the user to repeat what the session already settled
-  "violations": the ids of standing instructions it broke in this turn (empty list if none)
-  "redundant": how many things it redid that were already complete before the cut — re-reading a file it had already edited, re-running a fixed test, re-asking a settled question (0 if none)
-  "why": one line
-
-Judge the work against the user's intent and the reference, not against style. An agent that asks a clarifying question the history already answers is not faithful.
-
-=== USER'S MESSAGE ===
-${prompt.slice(0, 4000)}
-
-=== REFERENCE: WHAT THE REAL AGENT DID ===
-${reference}
-
-=== STANDING INSTRUCTIONS ===
-${instructions.map((i) => `${i.id}. [${i.source}] ${i.text}`).join("\n") || "(none)"}
-
-${Object.entries(sets).map(([label, turn]) => `=== AGENT ${label} ===\n${turn}`).join("\n\n")}
-
-Reply with only JSON: {"grades":{${Object.keys(sets).map((l) => `"${l}":{"fidelity":0,"violations":[],"redundant":0,"why":"..."}`).join(",")}}}`
-
-// ---------------------------------------------------------------- reading a turn back
-
 function turnSummary(file: string, promptText: string, transcriptDirs: string[]) {
   if (!existsSync(file)) return { text: "(no session file)", toolCalls: 0, readsBeforeActing: 0 }
   const entries = parse(readFileSync(file, "utf8").split("\n").filter(Boolean))
@@ -198,8 +134,6 @@ function turnSummary(file: string, promptText: string, transcriptDirs: string[])
   return { text: out.join("\n").slice(0, 14_000), toolCalls, readsBeforeActing }
 }
 
-// ---------------------------------------------------------------- one point
-
 async function runPoint(point: ContPoint, index: number) {
   const tag = `c${point.tag.slice(1)}`
   const resultFile = path.join(OUT, `${tag}.json`)
@@ -221,7 +155,6 @@ async function runPoint(point: ContPoint, index: number) {
     nativeLines = readFileSync(nativeFile, "utf8").split("\n").filter(Boolean)
   }
 
-  // standing instructions, once per point
   const instructionsFile = path.join(KEEP, `${tag}.instructions.json`)
   let instructions: any[] = []
   if (existsSync(instructionsFile)) instructions = JSON.parse(readFileSync(instructionsFile, "utf8"))
@@ -240,7 +173,6 @@ async function runPoint(point: ContPoint, index: number) {
     const isNative = arm === "native" || arm === "native+guide"
     const dir = path.join(WORK, `${tag}-${arm.replace("+", "-")}`)
     try { addWorktree(point.cwd, base.sha, dir) } catch (e) { arms[arm] = { error: String(e) }; log(`${arm}: ${e}`); return }
-    // Absolute paths in the history point at the real checkout; aim them at the worktree.
     const swap = (s: string) => s.split(point.cwd).join(dir)
     const retarget = (e: Entry) => JSON.parse(swap(JSON.stringify(e)))
     const edit = isNative ? (e: Entry) => retarget(repointSummary(transcriptCopy)(e)) : (e: Entry) => retarget(shrinkUsage(e))
@@ -287,7 +219,7 @@ async function runPoint(point: ContPoint, index: number) {
   const grades: Record<string, Record<string, any>> = {}
   await Promise.all(JUDGES.map(async (model, j) => {
     await Bun.sleep(j * 1200)
-    const out = await claude(["--model", model, ...NO_TOOLS], { cwd: OUT, stdin: JUDGE(next.prompt, next.reference, instructions, sets) })
+    const out = await claude(["--model", model, ...NO_TOOLS], { cwd: OUT, stdin: CONTINUATION_JUDGE(next.prompt, next.reference, instructions, sets) })
     try {
       const raw = extractJson(out.result).grades
       grades[model] = Object.fromEntries(order.map((arm, i) => [arm, raw[labels[i]] ?? {}]))
@@ -303,8 +235,6 @@ async function runPoint(point: ContPoint, index: number) {
   writeFileSync(resultFile, JSON.stringify(result, null, 2))
   log(`fidelity: ${answered.map((a) => `${a} ${arms[a].fidelity?.toFixed(1)}`).join("  ")}`)
 }
-
-// ---------------------------------------------------------------- main
 
 if (import.meta.main) {
   const points = chooseContinuation()

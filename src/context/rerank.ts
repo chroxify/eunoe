@@ -17,7 +17,7 @@ export function orderByProbability(candidates: number[], probabilities: Record<s
   return candidates.map((_, n) => n).sort((a, b) => (probabilities[String(b)] ?? 0) - (probabilities[String(a)] ?? 0) || a - b).map((n) => candidates[n])
 }
 
-export function jevReranker(model: string, key: string, endpoint = RERANK_ENDPOINT): Reranker {
+export function jevReranker(model: string, key: string, endpoint = RERANK_ENDPOINT, onError?: (reason: string) => void): Reranker {
   return async (query, chunks, candidates) => {
     if (candidates.length < 2) return candidates
     try {
@@ -33,11 +33,16 @@ export function jevReranker(model: string, key: string, endpoint = RERANK_ENDPOI
           },
         }),
       })
-      if (!response.ok) return candidates
+      if (!response.ok) {
+        const body = await response.text().catch(() => "")
+        onError?.(`${response.status} ${/error_type"\s*:\s*"([^"]+)/.exec(body)?.[1] ?? body.slice(0, 60)}`.trim())
+        return candidates
+      }
       const json: any = await response.json()
       const probabilities = json?.answers?.where?.probabilities
       return probabilities && typeof probabilities === "object" ? orderByProbability(candidates, probabilities) : candidates
-    } catch {
+    } catch (error) {
+      onError?.(error instanceof Error ? error.name === "TimeoutError" ? `timeout after ${RERANK_TIMEOUT_MS}ms` : error.message : String(error))
       return candidates
     }
   }

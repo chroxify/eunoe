@@ -1,7 +1,3 @@
-/**
- * Find benchmark points: the first auto-compaction of a main session whose
- * project dir still exists and that has enough history before the cut.
- */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
@@ -49,7 +45,6 @@ export function textOf(entry: Entry) {
 
 export const clean = (raw: string) => raw.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<system-message>[\s\S]*?<\/system-message>/g, "").trim()
 
-/** A user turn a person typed: not a tool result, not a slash command, not an interruption marker. */
 export function realPrompt(entry: Entry) {
   if (!isPromptEntry(entry)) return false
   const p = clean(textOf(entry))

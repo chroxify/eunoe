@@ -1,67 +1,21 @@
-/**
- * Runs context strategies ("arms") on planted sessions and scores them by
- * exact match against the planted values. No judge: a fact counts when the
- * planted value is in the answer, a revised fact counts as stale when only
- * the old value is.
- *
- * Every arm resumes the same session through its own eunoe proxy and gets two
- * messages, in this order:
- *   1. tasks:    requests that can only be done right by applying an earlier
- *                instruction, without mentioning it (does it use what it knows?)
- *   2. recall:   one question per planted fact (does it know it?)
- *
- * Every arm sends the same system prompt and tools (the proxy's canonical
- * header), so the only thing that differs is the conversation each arm keeps.
- *
- *   bun bench/planted/run.ts [--split=dev|test|all] [--arms=a,b,c] [--sessions=s00,s03] [--parallel=3] [--tag=name]
- */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { extractJson } from "../lib/json"
-import { ARMS, type ArmSpec } from "../arms"
-import { BASE_SETTINGS, READ_ONLY, claude, projectDir } from "../lib/claude"
+import type { ArmSpec } from "../arms"
+import { ARMS } from "../constants"
+import { claude, projectDir } from "../lib/claude"
+import { BASE_SETTINGS, READ_ONLY } from "../lib/constants"
 import { blocks, parse, textOf } from "../lib/points"
 import { startProxies as spawnProxies } from "../lib/proxy"
 import { lookupsAfterQuestion } from "../real/run"
-import { PLANT_OUT, SESSIONS, type Meta } from "./generate"
-
-export const ANSWER_MODEL = "claude-sonnet-5-5"
-export const RUNS = path.join(PLANT_OUT, "runs")
-const NATIVE = path.join(PLANT_OUT, "native")
-const CANON = path.join(PLANT_OUT, "canon")
-const TRANSCRIPTS = path.join(PLANT_OUT, "transcripts")
-const CUT_SHARE = 0.95
+import type { Meta } from "./generate"
+import { ANSWER_MODEL, CANON, CUT_SHARE, NATIVE, RECALL, RUNS, SESSIONS, SUPERSEDED_AFTER, SUPERSEDED_BEFORE, TASKS, TRANSCRIPTS } from "./constants"
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
-
-// ---------------------------------------------------------------- prompts
-
-export const TASKS = (facts: Meta["facts"]) => `A few quick things before we carry on. Don't run or change anything for these, just answer each one in a sentence or two, as you actually would do it right now.
-
-${facts.map((f) => `${f.id}. ${f.task}`).join("\n")}
-
-Reply with only JSON: {"replies":[{"id":"${facts[0]?.id}","reply":"..."}, ...]}`
-
-export const RECALL = (facts: Meta["facts"]) => `Stop the current work for a moment: this is a memory check about this session. Do not continue the task and do not change anything.
-
-Answer each question about what happened earlier in this session. Use what is in your context. If it isn't there and you know where this session's transcript is, search it (read-only). Do not inspect the project's files or git history to reconstruct answers; they must come from this conversation. If you don't know, answer "unknown" rather than guessing.
-
-Give only the exact value each question asks for (an ID, a number, a name, a flag, a prefix), copied exactly, with no explanation.
-
-${facts.map((f) => `${f.id}. ${f.question}`).join("\n")}
-
-Reply with only JSON: {"answers":[{"id":"${facts[0]?.id}","answer":"..."}, ...]}`
-
-// ---------------------------------------------------------------- scoring
 
 export const norm = (text: string) => String(text ?? "").toLowerCase().replace(/[`'"“”‘’]/g, "").replace(/(\d),(\d{3})/g, "$1$2").replace(/\s+/g, " ").trim()
 
 export type Verdict = "correct" | "stale" | "wrong" | "unknown"
-
-// A stale value mentioned as history ("replaced the old pennix/", "not
-// @beltor27") is not a use of it. Only an unframed mention counts.
-const SUPERSEDED_BEFORE = /(?:old|older|previous|former|earlier|replac\w*|instead of|rather than|no longer|not|n.t|over|from|was|were|used to|superseded|dropped|rejected|ruled out|than)\W*(?:\w+\W+){0,4}$/
-const SUPERSEDED_AFTER = /^\W*(?:\w+\W+){0,3}?(?:is|was|has been|got)?\W*(?:no longer|replaced|superseded|retired|dropped|rejected|out|old|obsolete|deprecated)\b/
 
 export function usesUnframed(said: string, value: string): boolean {
   const needle = norm(value)
@@ -83,8 +37,6 @@ export function verdict(fact: Meta["facts"][number], response: string | undefine
   if (fact.stale && has(fact.stale)) return "stale"
   return /unknown|don.?t know|not (?:sure|in (?:my )?context)|can.?t (?:find|tell)|no record/.test(said) ? "unknown" : "wrong"
 }
-
-// ---------------------------------------------------------------- session copies
 
 function writeCopy(cwd: string, lines: string[], id: string, edit?: (e: any) => any) {
   const file = path.join(projectDir(cwd), `${id}.jsonl`)
@@ -115,7 +67,6 @@ function repointSummary(transcript: string) {
   }
 }
 
-/** Claude Code's own compaction of the session, made once and reused by every run. */
 async function nativeCopy(meta: Meta, lines: string[], log: (m: string) => void): Promise<string[] | null> {
   const file = path.join(NATIVE, `${meta.id}.jsonl`)
   if (existsSync(file)) return readFileSync(file, "utf8").split("\n").filter(Boolean)
@@ -135,8 +86,6 @@ async function nativeCopy(meta: Meta, lines: string[], log: (m: string) => void)
   writeFileSync(file, after.join("\n") + "\n")
   return after
 }
-
-// ---------------------------------------------------------------- one arm
 
 export interface ArmResult {
   arm: string
@@ -213,8 +162,6 @@ async function runArm(meta: Meta, spec: ArmSpec, lines: string[], native: string
   }
 }
 
-// ---------------------------------------------------------------- one session
-
 async function runSession(meta: Meta, specs: ArmSpec[], tag: string) {
   const log = (m: string) => console.log(`[${meta.id} ${meta.repo}] ${m}`)
   const dir = path.join(RUNS, tag)
@@ -226,9 +173,6 @@ async function runSession(meta: Meta, specs: ArmSpec[], tag: string) {
   if (!todo.length) return
   const native = todo.some((s) => s.native) ? await nativeCopy(meta, lines, log) : []
   if (!native) return
-  // Canonical system prompt and tools come from an arm that resumes the
-  // uncompacted session (what a live user's session sends), so native arms
-  // start only once it exists.
   const canon = path.join(CANON, `${meta.id}.json`)
   mkdirSync(CANON, { recursive: true })
   const save = (r: ArmResult) => writeFileSync(path.join(dir, `${meta.id}.${r.arm}.json`), JSON.stringify(r, null, 2))
@@ -244,8 +188,6 @@ async function runSession(meta: Meta, specs: ArmSpec[], tag: string) {
     capture.then(() => Promise.all(natives.map((s) => runArm(meta, s, lines, native, log).then(save)))),
   ])
 }
-
-// ---------------------------------------------------------------- proxies
 
 export const startProxies = (specs: ArmSpec[]) => spawnProxies(specs, path.join(RUNS, "proxies"))
 

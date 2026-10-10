@@ -690,3 +690,19 @@ Component evals after the change, all 36 sessions: evidence planted 97%
 (tool_value 95→96, prose 96→98), real 77→78; recall 91/91 unchanged. End to
 end numbers were not rerun; the change is to ranking inside a budget the
 frozen run already met.
+
+**2026-10-09, retrieval candidates (amendment to C).** On questions
+paraphrased with none of the source's words (`bench/results/components/retrieval-paraphrase.md`),
+bm25 candidates collapse (0% planted, 42% real) and Jev cannot recover what
+bm25 never surfaces. Hybrid bm25 + local e5-small candidates reach 65% real
+(68% with Jev) at no cost on the original questions. Adopted: hybrid
+candidates when the embedder is available, bm25 alone as the fallback, Jev
+reranking either. The handoff suite's recall arms use the same stack.
+
+**2026-10-09, index default reverted.** The paraphrase eval adopted `index: hybrid`
+(bm25 + e5-small candidates) as the default. On the handoff dev split every
+end-to-end hybrid arm regressed against its bm25 twin (recall-h+ 48% vs
+recall+ 81% facts; folded-cap60+recall-h+ 70% vs 91%) and the first response
+took 73–80 s instead of 25–30 s while the source session was embedded. The
+default is `bm25` again; `hybrid` stays an opt-in setting. Recorded before the
+handoff test split ran.

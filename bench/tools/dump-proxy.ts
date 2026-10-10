@@ -1,11 +1,8 @@
-// A forwarding proxy that records each request's system prompt head, tool
-// list shape and message count, then passes it to the API unchanged.
-//   bun bench/dump-proxy.ts <port> <logfile>
 import { appendFileSync } from "node:fs"
+import { UPSTREAM } from "../lib/constants"
 
 const port = Number(process.argv[2] ?? 8898)
 const log = process.argv[3] ?? "/tmp/dump-proxy.jsonl"
-const UPSTREAM = "https://api.anthropic.com"
 
 Bun.serve({
   port,

@@ -1,17 +1,8 @@
-/**
- * Scores a run of the planted suite and writes runs/<tag>/report.md.
- *
- * The unit of analysis is the session: per-arm accuracy is computed per
- * session first, then compared to native session by session (paired), with a
- * bootstrap 95% interval over sessions. Facts within a session are not
- * independent draws, so they are never resampled on their own.
- *
- *   bun bench/plant/report.ts [--tag=main] [--split=dev|test|all]
- */
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { bucketOf, DEPTH_BUCKETS, type FactType } from "./facts"
-import { loadMetas, RUNS, verdict, type ArmResult } from "./run"
+import { bucketOf, type FactType } from "./facts"
+import { DEPTH_BUCKETS, RUNS } from "./constants"
+import { loadMetas, verdict, type ArmResult } from "./run"
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 const pct = (x: number) => `${Math.round(x * 100)}%`

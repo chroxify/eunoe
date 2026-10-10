@@ -1,12 +1,5 @@
 import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import path from "node:path"
-
-const KEY_FILE = path.join(homedir(), ".config", "eunoe-bench", "typesafe-key")
-const ENDPOINT = "https://api.typesafe.ai/v1/systemone"
-
-export const JEV_BLOCK = 255
-export const JEV_MAX_LINES = 1_000
+import { EVIDENCE_CATEGORIES, JEV_BLOCK, JEV_ENDPOINT, JEV_KEY_FILE, JEV_MAX_LINES } from "./constants"
 
 export interface JevStats { calls: number; tokens: number; ms: number[] }
 export const jevStats = new Map<string, JevStats>()
@@ -17,12 +10,12 @@ export type JevQuestion = JevNoul | JevChoice
 export interface JevAnswers { [key: string]: { type: "noul"; noul: number } | { type: "choice"; choice: string; confidence: number; probabilities: Record<string, number> } }
 
 export async function jev(model: string, state: string, questions: Record<string, JevQuestion>): Promise<JevAnswers> {
-  const key = (process.env.TYPESAFE_API_KEY ?? readFileSync(KEY_FILE, "utf8")).trim()
+  const key = (process.env.TYPESAFE_API_KEY ?? readFileSync(JEV_KEY_FILE, "utf8")).trim()
   const stats = jevStats.get(model) ?? { calls: 0, tokens: 0, ms: [] }
   jevStats.set(model, stats)
   for (let attempt = 0; ; attempt += 1) {
     const t0 = performance.now()
-    const response = await fetch(ENDPOINT, { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ model, state, questions }) })
+    const response = await fetch(JEV_ENDPOINT, { method: "POST", headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify({ model, state, questions }) })
     const json: any = await response.json().catch(() => ({}))
     if (response.ok) {
       stats.calls += 1
@@ -48,14 +41,6 @@ export function blocks(lines: string[]): Array<Array<[number, string]>> {
   for (let i = 0; i < kept.length; i += JEV_BLOCK) out.push(kept.slice(i, i + JEV_BLOCK))
   return out
 }
-
-export const EVIDENCE_CATEGORIES: Array<[string, string, string]> = [
-  ["error", "This output contains an error, failure, exception or warning line", "Which line is the main error, failure or warning message?"],
-  ["status", "This output contains a final status or result line, such as deployed to, N passed, N failed, exit code, done, created, published", "Which line states the final status or result of the command?"],
-  ["ident", "This output prints an identifier a developer may need to recall later: an id, hash, URL, version number, token, key, host or resource name", "Which line prints the most important identifier (id, hash, URL, version, name)?"],
-  ["measure", "This output prints a measurement, count or amount: a duration, size, row count, test count, price or percentage", "Which line prints the most important measurement, count or amount?"],
-  ["change", "This output names a file, path, migration, table, branch or resource that was created, changed, applied or deleted", "Which line names what was created, changed, applied or deleted?"],
-]
 
 export function evidenceQuestions(block: Array<[number, string]>): Record<string, JevQuestion> {
   const criteria = Object.fromEntries(block.map(([i]) => [lineId(i), null]))

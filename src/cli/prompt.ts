@@ -1,3 +1,4 @@
+import { KEY_SEQUENCE } from "./constants"
 import { c, useColor } from "./ui"
 
 export interface Choice<T extends string = string> {
@@ -8,18 +9,20 @@ export interface Choice<T extends string = string> {
 
 export const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY)
 
-function keys(onKey: (key: string) => boolean | void): Promise<void> {
+export function keys(onKey: (key: string) => boolean | void): Promise<void> {
   return new Promise((resolve) => {
     const stdin = process.stdin
     stdin.setRawMode(true)
     stdin.resume()
     stdin.setEncoding("utf8")
     const handler = (chunk: string) => {
-      if (onKey(chunk) === true) {
+      for (const key of chunk.match(KEY_SEQUENCE) ?? []) {
+        if (onKey(key) !== true) continue
         stdin.off("data", handler)
         stdin.setRawMode(false)
         stdin.pause()
         resolve()
+        return
       }
     }
     stdin.on("data", handler)

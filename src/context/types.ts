@@ -29,6 +29,7 @@ export interface NoticeCounts {
 
 export interface RecallChunk {
   turn: number
+  from?: string
   call: string
   lines: string[]
   terms: string[]

@@ -5,11 +5,13 @@ export const OMITTED_BEFORE_HEADER = "x-eunoe-omitted-before"
 export const CANONICAL_HEADER = "x-eunoe-canonical"
 export const WINDOW_HEADER = "x-eunoe-window"
 export const BILLING_LINE = /^x-anthropic-billing-header:[^\n]*/
+export const PROMPT_TOO_LONG = /prompt is too long[^0-9]*(\d+)\s*tokens?\s*>\s*(\d+)/i
 
 export const TARGET_SHARE = 0.3
 export const PROTECTED_OUTPUTS = 5
 
 export const DEFAULT_RATIO = 1 / 3.6
+export const OVERFLOW_MARGIN = 1.1
 export const MEDIA_CHARS = 5_800
 export const MEDIA_MIN_LENGTH = 2_000
 
@@ -24,6 +26,8 @@ export const IDLE_TIMEOUT_SECONDS = 255
 export const SESSION_SEEN_INTERVAL_MS = 30_000
 export const SESSION_HEAD_BYTES = 65_536
 export const SESSIONS_KEPT = 200
+export const FINGERPRINT_HEX_CHARS = 24
+export const INJECTED_BLOCK = /^<recalled-context[\s>]/
 
 export const FINGERPRINT_LENGTH = 12
 export const SKILL_MARKER = /Base directory for this skill: ([^\s"\\]+)/g

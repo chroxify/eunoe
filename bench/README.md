@@ -133,3 +133,26 @@ business in an end-to-end run.
 machine is `SPEC.md`, `RESULTS.md`, `results/`, and, per SPEC B10, the
 per-point JSON and continuation diffs after a review, since they quote
 session content in questions and answers.
+
+## Accounts and rotation
+
+Every Claude call runs on the account in `BENCH_CLAUDE_CONFIG_DIR` (cswap
+account 3). `BENCH_CSWAP_ROTATE=1,2` lets the handoff suite use another
+cswap account when that one is limited, chosen once per run
+(`chooseAccount()` in `lib/claude.ts`): all calls of one run share it,
+because `--resume` only works on the account that opened the session. The
+planted and real suites resume a session file copied under the pinned
+account's config dir, so they never rotate.
+
+## Cold-start suite extras
+
+- `handoff/VALIDATION.md`: the per-detail checklist both features were held to,
+  with where each item was checked and what came out.
+- `handoff/select-real.ts`: selection on the machine's real history
+  (`~/.claude/projects`, projects with 2+ sessions of 15+ turns), resume
+  prompts written by Opus and cached under `out/handoff/select-real/`.
+- `tools/fold-real.ts <session.jsonl>…`: size and shape of the folded view of
+  real sessions.
+- Arms `multi2+recall+` / `multi-all+recall+` (top-k sources folded under one
+  budget), `*-rw` (proxy-side Haiku query rewrite), `*-rwh` (rewrite + hybrid
+  index with the worker embedder).
