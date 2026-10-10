@@ -9,6 +9,10 @@ export function blocks(message: Message): Block[] {
   return contentBlocks(message.content)
 }
 
+export function textOf(message: Message): string {
+  return blocks(message).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n")
+}
+
 export function withoutCacheControl(block: Block): Block {
   if (!("cache_control" in block)) return block
   const { cache_control: _, ...rest } = block
@@ -17,6 +21,12 @@ export function withoutCacheControl(block: Block): Block {
 
 export function clean(message: Message): Message {
   return { role: message.role, content: blocks(message).map(withoutCacheControl) }
+}
+
+export function shortHash(json: string, chars: number): string {
+  const hasher = new Bun.CryptoHasher("sha256")
+  hasher.update(json)
+  return hasher.digest("hex").slice(0, chars)
 }
 
 export function truncate(text: string, max: number): string {

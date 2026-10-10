@@ -10,6 +10,7 @@ export interface RollingConfig {
 export interface RerankConfig {
   model: string
   candidates?: number
+  endpoint?: string
 }
 
 export interface EvalConfig {

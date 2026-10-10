@@ -3,6 +3,7 @@ import type { RequestRecord } from "./types"
 
 export interface SessionStats {
   context: number
+  fixed: number | null
   plain: number | null
   turns: number | null
   requests: number
@@ -23,6 +24,7 @@ export interface Totals {
 
 export const sessionOf = (record: RequestRecord): string | null => (typeof record.thread === "string" ? record.thread.replace(THREAD_SUFFIX, "") : null)
 
+const fixedTokens = (record: RequestRecord): number | null => (record.charsFixed > 0 && record.charsOut > 0 && record.input > 0 ? Math.round(record.input * record.charsFixed / record.charsOut) : null)
 const plainTokens = (record: RequestRecord): number | null => (record.charsIn > 0 && record.charsOut > 0 && record.input > 0 ? Math.round(record.input * record.charsIn / record.charsOut) : null)
 
 export function withinWindow(records: RequestRecord[], now = Date.now(), window = STATUS_WINDOW_MS): RequestRecord[] {
@@ -37,6 +39,7 @@ export function perSession(records: RequestRecord[]): Map<string, SessionStats> 
     const previous = stats.get(id)
     stats.set(id, {
       context: record.input,
+      fixed: fixedTokens(record),
       plain: plainTokens(record),
       turns: typeof record.turns === "number" ? record.turns : previous?.turns ?? null,
       requests: (previous?.requests ?? 0) + 1,

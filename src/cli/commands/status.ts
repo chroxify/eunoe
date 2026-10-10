@@ -79,7 +79,7 @@ export const status: Command = {
           active === "off" ? c.dim("off") : c.green(active),
           session.cwd ? tilde(session.cwd) : c.dim("–"),
           stat?.turns ? c.dim(`${stat.turns} turns`) : "",
-          stat && active !== "off" ? `${c.bold(tokens(stat.context))} ctx` : "",
+          stat && active !== "off" ? `${c.bold(tokens(stat.context))} ctx${stat.fixed ? c.dim(` (${tokens(stat.fixed)} fixed)`) : ""}` : "",
           saved !== null && active !== "off" ? (saved > 0 ? c.green(`−${percent(saved)}`) : c.dim("±0")) : "",
           c.dim(ago(session.lastSeen)),
           own ? c.dim(own) : "",

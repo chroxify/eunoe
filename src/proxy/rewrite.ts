@@ -101,12 +101,18 @@ function overLimit(input: RewriteInput, result: Rewrite): boolean {
   return sentEstimate(result) > input.config.compactAt * input.window
 }
 
-export function rewrite(input: RewriteInput): Rewrite {
-  const result = once(input)
+function carried(from: Rewrite, to: Rewrite): Rewrite {
+  const actions = [...((from.note.actions as string[] | undefined) ?? []), ...((to.note.actions as string[] | undefined) ?? [])]
+  if (!from.note.compacted && !actions.length) return to
+  return { ...to, note: { ...to.note, compacted: Boolean(to.note.compacted || from.note.compacted), actions } }
+}
+
+export function rewrite(input: RewriteInput, before?: Rewrite): Rewrite {
+  const result = before ? carried(before, once(input)) : once(input)
   if (!overLimit(input, result)) return result
-  const recut = once(input)
+  const recut = carried(result, once(input))
   if (!overLimit(input, recut)) return { ...recut, note: { ...recut.note, fit: "recut" } }
-  const bare = once({ ...input, config: { ...input.config, eval: { ...input.config.eval, recall: false } } })
+  const bare = carried(recut, once({ ...input, config: { ...input.config, eval: { ...input.config.eval, recall: false } } }))
   return { ...bare, note: { ...bare.note, fit: overLimit(input, bare) ? "over" : "bare", fitEstimate: sentEstimate(bare) } }
 }
 
@@ -115,9 +121,10 @@ export async function rewriteAsync(input: RewriteInput): Promise<Rewrite> {
   const model = rerankModel(input.config)
   const key = model ? rerankKey() : null
   const failure = { reason: null as string | null }
-  const reranker = model && key ? jevReranker(model, key, undefined, (reason) => { failure.reason = reason }) : identityReranker
-  const done = reranker !== identityReranker ? await prefetchFor(input, strategize(input), reranker, failure) : null
-  const final = rewrite(input)
+  const reranker = model && key ? jevReranker(model, key, input.config.eval?.rerank?.endpoint, (reason) => { failure.reason = reason }) : identityReranker
+  const first = reranker !== identityReranker ? strategize(input) : null
+  const done = first ? await prefetchFor(input, first, reranker, failure) : null
+  const final = rewrite(input, first ?? undefined)
   if (!done) return final
   return { ...final, note: { ...final.note, recalled: done.recalled, ...(done.reranked ? { reranked: model } : {}), ...(done.rerankError ? { rerankError: `${model}: ${done.rerankError}` } : {}) } }
 }

@@ -84,6 +84,7 @@ export async function handle(request: Request): Promise<Response> {
   let threadKey = null as string | null
   let sentSize = 0
   let givenSize = 0
+  let fixedSize = 0
   let sent = null as (ContextFingerprint & { session: string | null }) | null
 
   const build = async () => {
@@ -98,6 +99,7 @@ export async function handle(request: Request): Promise<Response> {
       threadKey = result.threadKey
       bodyText = result.body !== given ? JSON.stringify(result.body, wellFormed) : givenText
       sentSize = sizeOf(result.body)
+      fixedSize = sizeOf({ ...result.body, messages: [] })
       givenSize = result.body === given ? sentSize : sizeOf(given)
       if (config.eval) sent = { session: sessionIdOf(request.headers, given), ...contextFingerprint(result.body), given: contextFingerprint(given) }
     } catch (error) {
@@ -150,6 +152,7 @@ export async function handle(request: Request): Promise<Response> {
       uncached: usage.input_tokens ?? 0,
       charsIn: givenSize,
       charsOut: sentSize,
+      charsFixed: fixedSize,
       ...(sent && { context: sent }),
     })
     if (threadKey && input > 0 && sentSize > 0) {

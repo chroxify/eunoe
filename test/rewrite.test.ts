@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { SESSIONS_SECTION } from "../src/context/prompts"
-import { messageFingerprint, rewrite } from "../src/proxy/rewrite"
+import { messageFingerprint, rewrite, rewriteAsync } from "../src/proxy/rewrite"
 import { saveState } from "../src/proxy/state"
 import { splitTurns, turnFingerprint } from "../src/context/turns"
 import type { Body } from "../src/context/types"
@@ -221,5 +221,25 @@ describe("earlier sessions", () => {
     expect(out.note.compacted).toBe(true)
     expect(sections(out.body)).toBe(1)
     expect(JSON.stringify(out.body.system).split("Earlier sessions in this project").length - 1).toBe(1)
+  })
+})
+
+describe("logging a fold", () => {
+  test("a cut made while prefetching reranked recall is still reported as a fold", async () => {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ results: [] }) })
+    const had = process.env.TYPESAFE_API_KEY
+    process.env.TYPESAFE_API_KEY = "key"
+    try {
+      const id = freshSession()
+      const out = await rewriteAsync({ body: body(session(20, 3_000)), sessionId: id, config: config({ compactAt: 0.1, rerank: "jev-preview", eval: { rerank: { model: "jev-preview", endpoint: `http://127.0.0.1:${server.port}/systemone` } } }), transcript, window: 100_000, mayCompact: true })
+      expect(out.note.compacted).toBe(true)
+      expect(out.note.actions).toContain("cut")
+      const again = await rewriteAsync({ body: body(session(20, 3_000)), sessionId: id, config: config({ compactAt: 0.1, rerank: "jev-preview", eval: { rerank: { model: "jev-preview", endpoint: `http://127.0.0.1:${server.port}/systemone` } } }), transcript, window: 100_000, mayCompact: true })
+      expect(again.note.compacted).toBe(false)
+    } finally {
+      if (had === undefined) delete process.env.TYPESAFE_API_KEY
+      else process.env.TYPESAFE_API_KEY = had
+      server.stop(true)
+    }
   })
 })
