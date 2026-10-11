@@ -1,5 +1,4 @@
 import { homedir } from "node:os"
-import { ANSI_STYLE, TOKEN_UNITS, TYPO_DISTANCE } from "./constants"
 
 const colorFor = (stream: NodeJS.WriteStream) => Boolean(stream.isTTY) && !process.env.NO_COLOR && process.env.TERM !== "dumb"
 export const useColor = colorFor(process.stdout)
@@ -30,15 +29,15 @@ export function line(text = "") {
 }
 
 export function ok(text: string) {
-  console.log(`${c.green("✓")} ${text}`)
+  line(`${c.green("✓")} ${text}`)
 }
 
 export function note(text: string) {
-  console.log(`${c.dim("·")} ${text}`)
+  line(`${c.dim("·")} ${text}`)
 }
 
 export function warn(text: string) {
-  console.log(`${c.yellow("!")} ${text}`)
+  line(`${c.yellow("!")} ${text}`)
 }
 
 export function fail(text: string, hint?: string): never {
@@ -53,8 +52,11 @@ export function listFiles(files: string[]) {
 
 export function rows(entries: Array<[string, string]>, indent = 2) {
   const width = Math.max(...entries.map(([label]) => label.length))
-  for (const [label, value] of entries) console.log(`${" ".repeat(indent)}${c.dim(label.padEnd(width))}  ${value}`)
+  for (const [label, value] of entries) line(`${" ".repeat(indent)}${c.dim(label.padEnd(width))}  ${value}`)
 }
+
+const ESC = "\x1b"
+const ANSI_STYLE = new RegExp(`${ESC}\\[[0-9;]*m`, "g")
 
 const visible = (text: string) => text.replace(ANSI_STYLE, "")
 
@@ -63,7 +65,7 @@ export function table(entries: string[][], indent = 4, gap = 2) {
   const widths = Array.from({ length: columns }, (_, column) => Math.max(...entries.map((row) => visible(row[column] ?? "").length)))
   for (const row of entries) {
     const cells = widths.map((width, column) => (row[column] ?? "") + " ".repeat(Math.max(0, width - visible(row[column] ?? "").length)))
-    console.log(`${" ".repeat(indent)}${cells.join(" ".repeat(gap)).trimEnd()}`)
+    line(`${" ".repeat(indent)}${cells.join(" ".repeat(gap)).trimEnd()}`)
   }
 }
 
@@ -80,6 +82,10 @@ export function wrap(text: string, width: number): string[] {
   return out
 }
 
+export function plural(count: number, word: string) {
+  return `${count} ${word}${count === 1 ? "" : "s"}`
+}
+
 export function percent(share: number) {
   return `${Math.round(share * 100)}%`
 }
@@ -90,7 +96,12 @@ export function tilde(file: string) {
 }
 
 export function tokens(count: number) {
-  for (const [scale, suffix] of TOKEN_UNITS) {
+  for (const [scale, suffix] of [
+    [1e12, "T"],
+    [1e9, "B"],
+    [1e6, "M"],
+    [1e3, "k"],
+  ] as const) {
     const scaled = count / scale
     const shown = scaled.toFixed(scaled >= 10 ? 0 : 1)
     if (Number(shown) >= 1) return `${shown}${suffix}`
@@ -106,20 +117,21 @@ export function ago(iso: string) {
   return `${Math.round(seconds / 86_400)}d ago`
 }
 
-export function closest(input: string, options: string[]) {
-  const distance = (a: string, b: string) => {
-    const row = Array.from({ length: b.length + 1 }, (_, i) => i)
-    for (let i = 1; i <= a.length; i += 1) {
-      let previous = row[0]
-      row[0] = i
-      for (let j = 1; j <= b.length; j += 1) {
-        const current = row[j]
-        row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1))
-        previous = current
-      }
+function editDistance(a: string, b: string) {
+  const row = Array.from({ length: b.length + 1 }, (_, i) => i)
+  for (let i = 1; i <= a.length; i += 1) {
+    let previous = row[0]
+    row[0] = i
+    for (let j = 1; j <= b.length; j += 1) {
+      const current = row[j]
+      row[j] = Math.min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1))
+      previous = current
     }
-    return row[b.length]
   }
-  const [best] = options.map((option) => [option, distance(input, option)] as const).sort((x, y) => x[1] - y[1])
-  return best && best[1] <= TYPO_DISTANCE ? best[0] : null
+  return row[b.length]
+}
+
+export function closest(input: string, options: string[]) {
+  const [best] = options.map((option) => [option, editDistance(input, option)] as const).sort((x, y) => x[1] - y[1])
+  return best && best[1] <= 2 ? best[0] : null
 }

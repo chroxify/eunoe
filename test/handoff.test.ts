@@ -2,10 +2,9 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { continuePrompt } from "../src/cli/sessions"
-import { paths } from "../src/config/constants"
-import { CONTINUE_TRIGGER } from "../src/proxy/constants"
+import { paths } from "../src/config/paths"
+import { messageFingerprint } from "../src/proxy/fingerprint"
 import { continueIdOf, continueToken } from "../src/proxy/handoff"
-import { messageFingerprint } from "../src/proxy/rewrite"
 import { handle } from "../src/proxy/server"
 import { freshSession } from "./fixtures"
 
@@ -99,7 +98,7 @@ describe("the continue marker", () => {
     expect(continueIdOf(say("finish it {ee:continue:prior-se} please"))).toBe("prior-se")
     expect(continueIdOf(say("{ee:continue:short}"))).toBeNull()
     expect(continueIdOf(say("a JS object { continue: x } is not a marker"))).toBeNull()
-    expect(CONTINUE_TRIGGER.test("nothing here")).toBe(false)
+    expect(continueIdOf(say("nothing here"))).toBeNull()
   })
 
   test("a marker quoted inside recalled context does not count as the message's own", () => {

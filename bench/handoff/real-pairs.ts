@@ -1,14 +1,21 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { SESSION_MIN_TERMS, SESSION_SOURCE_CANDIDATES, SESSION_SOURCE_MIN_TURNS } from "../../src/cli/sessions/constants"
-import { outlineOf } from "../../src/cli/sessions/source"
-import { blocks } from "../../src/context/content"
-import { rank, terms } from "../../src/context/recall"
-import type { RecallChunk } from "../../src/context/recall/types"
-import type { Message } from "../../src/context/types"
+import { outlineOf, SESSION_MIN_TERMS, SESSION_SOURCE_CANDIDATES, SESSION_SOURCE_MIN_TURNS } from "../../src/cli/sessions/source"
+import { blocks, type Message } from "../../src/context/content"
+import { type RecallChunk, rank, terms } from "../../src/context/recall"
 import { sessionMessages } from "../../src/transcript/messages"
 import { sessionRoots } from "../lib/points"
-import { COMMON_SHARE, CONTINUE_FILES, CONTINUE_SHARE, EDIT_TOOLS, HANDOFF_OUT, REAL_PAIRS_OUT } from "./constants"
+import { HANDOFF_OUT } from "./paths"
+
+const REAL_PAIRS_OUT = path.join(HANDOFF_OUT, "real-pairs.md")
+
+const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"])
+
+const COMMON_SHARE = 0.5
+
+const CONTINUE_SHARE = 0.5
+
+const CONTINUE_FILES = 2
 
 interface Session {
   id: string

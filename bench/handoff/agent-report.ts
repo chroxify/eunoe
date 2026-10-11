@@ -1,7 +1,11 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { loadMetas } from "../planted/run"
-import { BASELINE_ARMS, REPORT_SCENARIOS, RUNS } from "./constants"
+import { RUNS } from "./paths"
+
+const BASELINE_ARMS = ["cold", "cold+hint", "folded", "folded+recall", "brief-opus+recall+", "auto"]
+
+const REPORT_SCENARIOS = ["bug", "continue", "rules", "new"]
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 const tag = arg("tag") ?? "agent-dev"

@@ -1,13 +1,82 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { armSpec } from "../arms"
-import { ARMS as ALL_ARMS } from "../constants"
-import { claude, projectDir } from "../lib/claude"
-import { API_KEY, BASE_SETTINGS, CONFIG_DIR, NO_TOOLS, READ_ONLY } from "../lib/constants"
+import { ARMS as ALL_ARMS, armSpec } from "../arms"
+import { API_KEY, BASE_SETTINGS, CONFIG_DIR, claude, NO_TOOLS, projectDir, READ_ONLY } from "../lib/claude"
 import { extractJson } from "../lib/json"
 import { blocks, clean, type Entry, findPoints, parse, realPrompt, sessionRoots, textOf } from "../lib/points"
 import { proxyRequests as requestsOf, startProxies as spawnProxies } from "../lib/proxy"
-import { ANSWER, ANSWER_MODEL, ARMS, GENERATOR, JUDGE, JUDGES, ORACLE, ORACLE_MODEL, OUT, PROXIES, REPLICATE, RESULTS, RUN_TAG, SEED, SUFFIX } from "./constants"
+import { ANSWER_MODEL, ARMS, JUDGES } from "./arms"
+import { OUT, PROXIES } from "./paths"
+
+const RUN_TAG = process.env.BENCH_TAG
+
+const RESULTS = RUN_TAG ? path.join(OUT, "runs", RUN_TAG) : OUT
+
+const ORACLE_MODEL = "claude-opus-5-5"
+
+const SEED = 20261008
+
+const QUESTIONS = 12
+
+const REPLICATE = Number(process.env.BENCH_REPLICATE ?? 1)
+
+const SUFFIX = REPLICATE > 1 ? `.r${REPLICATE}` : ""
+
+const GENERATOR = `Below is the complete history of a real coding session, turn by turn, up to the moment its context window filled up. Each turn is labelled with how many turns before the cut it happened, and includes the user's message, what the agent said, every tool call, and the tool output.
+
+Write a memory test for an agent that has to continue this session after its context was compacted. Exactly ${QUESTIONS} questions, each with a short, specific, checkable reference answer taken from this history. Never guessable from general knowledge.
+
+Quotas, and they matter:
+- 3 x "tool_evidence": the answer appears ONLY in TOOL OUTPUT or a TOOL CALL, never in what the agent said in prose. An exact value a command printed, a filename from a listing, a count, an error string, an ID. At least one from more than 15 turns before the cut.
+- 2 x "mid_history": what was worked on 5-15 turns before the cut and how it ended. Name the topic, never the turn number.
+- 2 x "instruction": a standing instruction, preference or constraint the user gave earlier that still binds at the cut. Make it hard: prefer one that was given 5+ turns before the cut, that a reasonable agent might violate by default, or that was changed partway through — if it was revised, the answer is the revision. Ask it the way a real follow-up would test it ("Should you commit this yourself or wait for me?").
+- 1 x "decision": what was decided and why, including an option that was considered and rejected.
+- 2 x "continuation": what the agent was mid-way through when the context filled and what comes next; and what was promised or left open but not finished.
+- 2 x "recent": the answer appears ONLY in TOOL OUTPUT or a TOOL CALL from 1 to 3 turns before the cut (never the live turn, never in prose). The detail a user would expect the agent to still have in front of it: what the last test run printed, a value from a file it just read.
+
+Write questions whose answer is one fact, not an essay. Do not ask anything answerable from the final two turns alone unless it is a continuation or recent question. For each give "turnsAgo": how many turns before the cut the answer comes from (0 = the live turn).
+
+Return only JSON: {"questions":[{"id":1,"type":"tool_evidence","turnsAgo":17,"question":"...","answer":"..."}, ...]}
+
+=== SESSION HISTORY ===
+`
+
+const ORACLE = (questions: any[], material: string) => `Below are questions about a coding session, each with the reference answer it expects, followed by the complete session history.
+
+For each question decide one thing: does this history clearly support that reference answer?
+
+"ok" means the evidence is there and the reference answer is right. "bad" means anything else — not in the history, ambiguous, the history contradicts the reference, or it cannot be answered as asked. Be strict: a question that only nearly works is "bad". This filter exists so that no strategy is penalised for a broken question.
+
+Return only JSON: {"verdicts":[{"id":1,"verdict":"ok|bad","why":"<10 words"}, ...]}
+
+=== QUESTIONS ===
+${questions.map((q) => `${q.id}. [${q.type}] ${q.question}\n   REFERENCE: ${q.answer}`).join("\n")}
+
+=== SESSION HISTORY ===
+${material}`
+
+const ANSWER = (questions: any[]) => `Stop the current work for a moment: this is a memory check about this session. Do not continue the task and do not change anything.
+
+Answer each question about what happened earlier in this session. Use what is in your context. If it isn't there and you know where this session's transcript is, search it (read-only). Do not inspect the project's files or git history to reconstruct answers — they must come from this conversation. Say you don't know rather than guessing.
+
+${questions.map((q) => `${q.id}. ${q.question}`).join("\n")}
+
+Reply with only JSON: {"answers":[{"id":1,"answer":"...","source":"context|transcript|unknown"}, ...]}`
+
+const JUDGE = (questions: any[], sets: Record<string, any[]>) => {
+  const labels = Object.keys(sets)
+  return `Grade answers from ${labels.length} agents to a memory test about a coding session. For each question you get the reference answer and each agent's answer.
+
+For every answer give:
+  "score": 2 correct and specific (matches the reference in substance) · 1 partly correct or vague · 0 wrong, missing or declined
+  "label": "correct" · "partial" · "unknown" (it said it did not know) · "wrong" (it asserted something the reference contradicts)
+
+Judge only agreement with the reference. Do not reward length, confidence or style. "unknown" and "wrong" both score 0, but they are different failures and must be labelled apart.
+
+${questions.map((q) => [`Q${q.id} (${q.type}): ${q.question}`, `REFERENCE: ${q.answer}`, ...labels.map((l) => `${l}: ${String(sets[l].find((a: any) => a.id === q.id)?.answer ?? "(no answer)").slice(0, 1000)}`)].join("\n")).join("\n\n")}
+
+Reply with only JSON: {"grades":{${labels.map((l) => `"${l}":[{"id":1,"score":0,"label":"unknown"}, …]`).join(",")}}}`
+}
 
 const PHASE = (["points", "prepare", "run"].includes(process.argv[2] ?? "") ? process.argv[2] : "run") as "points" | "prepare" | "run"
 const NUMERIC = process.argv.slice(2).filter((a) => /^\d+$/.test(a))

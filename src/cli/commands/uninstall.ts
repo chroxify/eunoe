@@ -1,9 +1,9 @@
 import { claudeConfigDirs, readConfig } from "../../config"
+import type { Command } from "../command"
 import { editSettings, withoutEunoe } from "../proxy/claude-settings"
 import { removeService } from "../proxy/service"
 import { clearWatch } from "../proxy/watch"
 import { c, line, listFiles, note, ok, warn } from "../terminal/ui"
-import type { Command } from "../types"
 
 export const uninstall: Command = {
   summary: "Stop eunoe and remove the background proxy",

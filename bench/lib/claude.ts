@@ -1,6 +1,38 @@
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import path from "node:path"
-import { API_KEY, AUTH_ERROR, CONFIG_DIR, CREDITS_AFTER_MS, CREDITS_FOR_MS, CSWAP_ACCOUNT, LIMIT_ERROR, LIMIT_HOLD_MS, LOST_PROMPT, OUT, ROTATE } from "./constants"
+
+export const OUT = path.join(import.meta.dir, "..", "out")
+
+export const CONFIG_DIR = process.env.BENCH_CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude")
+
+export const UPSTREAM = "https://api.anthropic.com"
+
+export const API_KEY_FILE = path.join(homedir(), ".config", "eunoe-bench", "api-key")
+
+export const API_KEY = existsSync(API_KEY_FILE) ? readFileSync(API_KEY_FILE, "utf8").trim() : ""
+
+export const BASE_SETTINGS = { disableAllHooks: true, env: { ANTHROPIC_BASE_URL: UPSTREAM } }
+
+export const NO_TOOLS = ["--settings", JSON.stringify(BASE_SETTINGS), "--disallowedTools", "Bash Read Edit Write Glob Grep WebFetch WebSearch Agent"]
+
+export const READ_ONLY = "Read Grep Glob Bash(grep:*) Bash(rg:*) Bash(jq:*) Bash(head:*) Bash(tail:*) Bash(sed:*) Bash(wc:*) Bash(cat:*) Bash(awk:*) Bash(ls:*) Bash(qmd:*) Bash(cd:*)"
+
+const CSWAP_ACCOUNT = process.env.BENCH_CSWAP_ACCOUNT ?? "3"
+
+const ROTATE: string[] = (process.env.BENCH_CSWAP_ROTATE ?? "").split(",").filter(Boolean)
+
+const LIMIT_HOLD_MS = 10 * 60_000
+
+const CREDITS_AFTER_MS = 30 * 60_000
+
+const CREDITS_FOR_MS = 60 * 60_000
+
+const LIMIT_ERROR = /^\s*(?:You(?:'ve)? (?:hit|reached) your (?:\w+ )?limit|Claude usage limit reached|API Error: (?:429|529)|\S*(?:rate_limit_error|overloaded_error))/i
+
+const LOST_PROMPT = /no stdin data received|Provide a prompt to continue/i
+
+const AUTH_ERROR = /Failed to authenticate|OAuth|not logged in|Invalid authentication|authentication_error/i
 
 export const projectDir = (cwd: string) => path.join(CONFIG_DIR, "projects", realpathSync(cwd).replace(/[^a-zA-Z0-9]/g, "-"))
 

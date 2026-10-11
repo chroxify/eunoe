@@ -1,7 +1,45 @@
-import { contentBlocks } from "../context/content"
-import type { Block } from "../context/types"
-import { CALL_COMMAND_CHARS, CALL_DESCRIPTION_CHARS, CALL_INPUT_CHARS, CALL_PATTERN_CHARS, OUTPUT_CAP } from "./constants"
-import type { SessionEntry, ToolPart, Turn } from "./types"
+import { type Block, contentBlocks, type Message } from "../context/content"
+
+export interface SessionEntry {
+  type?: string
+  subtype?: string
+  isSidechain?: boolean
+  isMeta?: boolean
+  isCompactSummary?: boolean
+  agentId?: string
+  timestamp?: string
+  cwd?: string
+  aiTitle?: string
+  message?: { role: string; content: string | Block[] }
+}
+
+export type TranscriptFormat = "markdown" | "xml"
+
+export interface ToolPart {
+  kind: "tool"
+  n: number
+  id: string
+  name: string
+  prompt?: string
+  record?: string
+  call: string
+  body: string
+  output: string
+  error: boolean
+}
+
+type TurnPart = { kind: "say"; text: string } | ToolPart
+
+export interface Turn {
+  number: number
+  time: string
+  prompt: string
+  parts: TurnPart[]
+  final: string
+  calls: number
+}
+
+const OUTPUT_CAP = 40_000
 
 export function parseJsonl<T = SessionEntry>(text: string): T[] {
   return text.split("\n").flatMap((line) => {
@@ -14,20 +52,21 @@ export function parseJsonl<T = SessionEntry>(text: string): T[] {
   })
 }
 
-function stripReminders(text: string) {
-  return text
-    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
-    .replace(/<system-message>[\s\S]*?<\/system-message>/g, "")
-    .trim()
+export function entryMessages(entries: SessionEntry[]): Message[] {
+  return entries.flatMap((entry): Message[] => {
+    if (entry.isCompactSummary || (entry.type !== "user" && entry.type !== "assistant") || !entry.message) return []
+    return [{ role: entry.message.role, content: entry.message.content }]
+  })
 }
 
 function promptText(content: Block[]) {
-  return stripReminders(
-    content
-      .filter((block) => block.type === "text")
-      .map((block) => block.text ?? "")
-      .join("\n"),
-  )
+  return content
+    .filter((block) => block.type === "text")
+    .map((block) => block.text ?? "")
+    .join("\n")
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/<system-message>[\s\S]*?<\/system-message>/g, "")
+    .trim()
 }
 
 function isPrompt(entry: SessionEntry) {
@@ -39,12 +78,12 @@ function isPrompt(entry: SessionEntry) {
 
 function describeCall(block: Block): string {
   const input = block.input ?? {}
-  if (typeof input.command === "string") return `${block.name}: \`${input.command.replace(/\s+/g, " ").slice(0, CALL_COMMAND_CHARS)}\``
-  if (typeof input.file_path === "string") return `${block.name}: ${input.file_path}`
-  if (typeof input.pattern === "string") return `${block.name}: "${input.pattern.slice(0, CALL_PATTERN_CHARS)}"${input.path ? ` in ${input.path}` : ""}`
-  if (typeof input.url === "string") return `${block.name}: ${input.url}`
-  if (typeof input.description === "string") return `${block.name}: ${input.description.slice(0, CALL_DESCRIPTION_CHARS)}`
-  return `${block.name}: ${JSON.stringify(input).slice(0, CALL_INPUT_CHARS)}`
+  if (typeof input.command === "string") return `\`${input.command.replace(/\s+/g, " ").slice(0, 300)}\``
+  if (typeof input.file_path === "string") return input.file_path
+  if (typeof input.pattern === "string") return `"${input.pattern.slice(0, 120)}"${input.path ? ` in ${input.path}` : ""}`
+  if (typeof input.url === "string") return input.url
+  if (typeof input.description === "string") return input.description.slice(0, 160)
+  return JSON.stringify(input).slice(0, 200)
 }
 
 function callBody(block: Block): string {
@@ -92,7 +131,7 @@ function recordAssistant(turn: Turn, content: Block[], pending: Map<string, Tool
       id: String(block.id ?? ""),
       name: block.name,
       prompt: typeof block.input?.prompt === "string" ? block.input.prompt : undefined,
-      call: describeCall(block).slice(block.name.length + 2),
+      call: describeCall(block),
       body: callBody(block),
       output: "",
       error: false,

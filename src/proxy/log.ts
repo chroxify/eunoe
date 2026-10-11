@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync } from "node:fs"
-import { EUNOE_DIR, paths } from "../config/constants"
+import { EUNOE_DIR, paths } from "../config/paths"
 
 export function logRequest(record: Record<string, unknown>) {
   try {

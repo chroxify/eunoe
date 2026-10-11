@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { BASE_SETTINGS, CONFIG_DIR } from "../lib/constants"
-import { OUT } from "../real/constants"
+import { BASE_SETTINGS, CONFIG_DIR } from "../lib/claude"
+import { OUT } from "../real/paths"
 import { choosePoints, repointSummary, shrinkUsage, writeCopy } from "../real/run"
 
 const tag = process.argv[2] ?? "p01"

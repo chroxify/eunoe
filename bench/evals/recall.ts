@@ -1,9 +1,21 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { rank, recallChunks, recallFor, terms } from "../../src/context/recall"
-import { COMPONENTS, TOOL_FACTS } from "../lib/constants"
-import { depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints, Tally } from "../lib/data"
-import { DEPTH_KEYS, PLANTED_KEYS, REAL_KEYS, RECALL_VARIANTS } from "./constants"
+import { type RecallOptions, rank, recallChunks, recallFor, terms } from "../../src/context/recall"
+import { COMPONENTS, DEPTH_KEYS, depthBucket, keyTokens, mentions, PLANTED_KEYS, pct, plantedSessions, REAL_KEYS, realPoints, Tally, TOOL_FACTS } from "../lib/data"
+
+const RECALL_VARIANTS: Record<string, RecallOptions> = {
+  v1: { windowLines: 12, perQuery: 2, maxChars: 6_000, maxCharsMulti: 16_000, salientExcerpt: false, narrative: false },
+  default: {},
+  "no-narrative": { narrative: false },
+  "no-salient": { salientExcerpt: false },
+  top4: { perQuery: 4, maxChars: 6_000, maxCharsMulti: 16_000 },
+  top12: { perQuery: 12, maxChars: 18_000, maxCharsMulti: 30_000 },
+  win6: { windowLines: 6 },
+  win8: { windowLines: 8 },
+  "win6+top12": { windowLines: 6, perQuery: 12, maxChars: 18_000, maxCharsMulti: 30_000 },
+  "win6+top6": { windowLines: 6, perQuery: 6 },
+  "win4+top12": { windowLines: 4, perQuery: 12, maxChars: 18_000, maxCharsMulti: 30_000 },
+}
 
 const split = process.argv[2]
 const sessions = plantedSessions(split)

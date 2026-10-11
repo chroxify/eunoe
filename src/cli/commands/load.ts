@@ -1,14 +1,19 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { paths } from "../../config/constants"
-import { foldedView } from "../../context/fold"
-import { FOLD_CAP_CHARS } from "../../context/fold/constants"
+import { paths } from "../../config/paths"
+import { FOLD_CAP_CHARS, foldedView } from "../../context/fold"
+import type { Command } from "../command"
 import { candidateOf, candidatesHere, shortId, titleOf } from "../sessions"
-import type { SessionCandidate } from "../sessions/types"
+import type { SessionCandidate } from "../sessions/source"
 import { line } from "../terminal/ui"
-import type { Command } from "../types"
 
-export function writeLoaded(cand: SessionCandidate): { file: string; lines: number; chars: number } {
+interface Loaded {
+  file: string
+  lines: number
+  chars: number
+}
+
+export function writeLoaded(cand: SessionCandidate): Loaded {
   const text = foldedView(cand.messages, FOLD_CAP_CHARS)
   mkdirSync(paths.loaded, { recursive: true })
   const file = path.join(paths.loaded, `${cand.id}.md`)
@@ -16,7 +21,7 @@ export function writeLoaded(cand: SessionCandidate): { file: string; lines: numb
   return { file, lines: text.split("\n").length, chars: text.length }
 }
 
-export const loadedLine = (cand: SessionCandidate, written: ReturnType<typeof writeLoaded>) =>
+export const loadedLine = (cand: SessionCandidate, written: Loaded) =>
   `Session ${shortId(cand.id)} "${titleOf(cand)}" written to ${written.file} (${written.lines} lines, ${Math.round(written.chars / 1000)}k characters). Read the whole file with the Read tool, from line 1 to line ${written.lines}, before acting.`
 
 export const load: Command = {

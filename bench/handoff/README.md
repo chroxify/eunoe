@@ -36,7 +36,7 @@ prompt and tools as the other suites, and `cold+hint` sends
 `x-eunoe-transcript` so the one-line hint names a real file. The `agent*`
 arms need nothing else: the fresh session's system prompt teaches `eunoe
 sessions`, `eunoe load` and `eunoe peek` (`AGENT_SECTIONS` in
-`constants.ts`), and the agent runs the CLI in `bin/` itself.
+`run.ts`), and the agent runs the CLI in `bin/` itself.
 
 The injection and cross-session recall arms (`full`, `folded*`, `rules`,
 `brief-*`, `*recall*`, `auto*`, `multi*`) send `x-eunoe-handoff-file` and

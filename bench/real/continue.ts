@@ -2,12 +2,75 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os"
 import path from "node:path"
 import { armSpec } from "../arms"
-import { claude, projectDir } from "../lib/claude"
-import { BASE_SETTINGS, NO_TOOLS } from "../lib/constants"
+import { BASE_SETTINGS, claude, NO_TOOLS, projectDir } from "../lib/claude"
 import { extractJson } from "../lib/json"
 import { blocks, clean, type Entry, parse, realPrompt, textOf } from "../lib/points"
-import { ANSWER_MODEL, CONT_ARMS, CONTINUATION_JUDGE, DENIED, EDIT_TOOLS, INSTRUCTIONS, JUDGES, KEEP, MAX_TURNS, OUT, PROXIES, READ_COMMAND, READ_TOOLS, TOOLS, WORK } from "./constants"
+import { ANSWER_MODEL, ARMS, JUDGES } from "./arms"
+import { OUT, PROXIES } from "./paths"
 import { type BenchPoint, choosePoints, proxyFor, proxyRequests, repointSummary, seededShuffle, shrinkUsage, sourceMaterial, startProxies } from "./run"
+
+const WORK = path.join(OUT, "worktrees")
+
+const KEEP = path.join(OUT, "continuation")
+
+const CONT_ARMS = ARMS.filter((a) => a !== "full")
+
+const MAX_TURNS = 60
+
+const TOOLS = "Bash Read Edit Write MultiEdit NotebookEdit Glob Grep WebFetch"
+
+const DENIED =
+  "Bash(git push:*) Bash(gh:*) Bash(npm publish:*) Bash(bun publish:*) Bash(pnpm publish:*) Bash(yarn publish:*) Bash(vercel:*) Bash(wrangler:*) Bash(fly:*) Bash(eas:*) Bash(xcrun altool:*) Bash(xcrun notarytool:*) Bash(fastlane:*) Bash(kubectl:*) Bash(terraform:*) Bash(docker push:*) Bash(curl -X POST:*) Bash(curl --data:*) Agent Task WebSearch"
+
+const INSTRUCTIONS = (material: string, claudeMd: string) => `Below is the complete history of a coding session up to the moment its context filled, followed by the CLAUDE.md files that applied to it.
+
+List every standing instruction that was still in force at that moment: things the user told the agent to do or not do (commit or not, which package manager, where to deploy, how to write replies, what to leave alone), rules loaded from a skill the agent invoked, and rules from CLAUDE.md. Only instructions a continuing agent could violate in its very next turn. Each as one short line, with its source.
+
+Return only JSON: {"instructions":[{"id":1,"source":"user|skill|claude_md","text":"..."}, ...]}
+
+=== CLAUDE.md ===
+${claudeMd.slice(0, 20_000) || "(none)"}
+
+=== SESSION HISTORY ===
+${material}`
+
+const CONTINUATION_JUDGE = (
+  prompt: string,
+  reference: string,
+  instructions: any[],
+  sets: Record<string, string>,
+) => `A coding session was compacted and then continued by several agents. You get the user's next message, what the REAL agent did in response at the time (the reference), the standing instructions active at that moment, and what each agent did on the same message after compaction.
+
+Score each agent:
+  "fidelity": 2 = it did what the real continuation did, or something defensibly equivalent given the same instruction · 1 = partly, or headed the right way but stopped short or drifted · 0 = did something else, did nothing useful, or asked the user to repeat what the session already settled
+  "violations": the ids of standing instructions it broke in this turn (empty list if none)
+  "redundant": how many things it redid that were already complete before the cut — re-reading a file it had already edited, re-running a fixed test, re-asking a settled question (0 if none)
+  "why": one line
+
+Judge the work against the user's intent and the reference, not against style. An agent that asks a clarifying question the history already answers is not faithful.
+
+=== USER'S MESSAGE ===
+${prompt.slice(0, 4000)}
+
+=== REFERENCE: WHAT THE REAL AGENT DID ===
+${reference}
+
+=== STANDING INSTRUCTIONS ===
+${instructions.map((i) => `${i.id}. [${i.source}] ${i.text}`).join("\n") || "(none)"}
+
+${Object.entries(sets)
+  .map(([label, turn]) => `=== AGENT ${label} ===\n${turn}`)
+  .join("\n\n")}
+
+Reply with only JSON: {"grades":{${Object.keys(sets)
+  .map((l) => `"${l}":{"fidelity":0,"violations":[],"redundant":0,"why":"..."}`)
+  .join(",")}}}`
+
+const EDIT_TOOLS = ["Edit", "Write", "MultiEdit"]
+
+const READ_TOOLS = ["Read", "Grep", "Glob"]
+
+const READ_COMMAND = /^(cat|grep|rg|head|tail|sed -n|ls|find|jq|qmd)\b/
 
 const TOTAL = Number(process.argv[2] ?? 20)
 const PARALLEL = Number(process.argv[3] ?? 2)

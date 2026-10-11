@@ -1,13 +1,16 @@
-import { compactionOwner, readConfig, saveConfig } from "../../config"
-import { MODES } from "../../config/constants"
-import type { Mode } from "../../config/types"
+import { compactionOwner, MODES, type Mode, readConfig, saveConfig } from "../../config"
+import type { Command } from "../command"
 import { editSettings, withCompactionOwner } from "../proxy/claude-settings"
 import { routedDirs } from "../proxy/inspect"
 import { isKnown, sessionArgs, shortId } from "../sessions"
 import { interactive, select } from "../terminal/prompt"
 import { c, fail, line, note, ok, warn } from "../terminal/ui"
-import type { Command } from "../types"
-import { MODE_DESCRIPTIONS } from "./constants"
+
+export const MODE_DESCRIPTIONS: Record<Mode, string> = {
+  default: "Recent turns whole, older turns folded; evidence and recall on",
+  compact: "Claude Code as it is, only its compaction replaced",
+  off: "Passthrough; Claude Code compacts on its own",
+}
 
 function listModes(current: Mode) {
   line()
@@ -33,6 +36,17 @@ function applyMode(next: Mode, ids: string[]) {
   ok(`Mode ${c.bold(next)}  ${c.dim(MODE_DESCRIPTIONS[next])}`)
 }
 
+function printModes(current: Mode) {
+  const config = readConfig()
+  listModes(current)
+  const own = Object.entries(config.sessions).filter(([, settings]) => settings.mode)
+  if (own.length > 0) {
+    line()
+    for (const [id, settings] of own) line(`  ${c.dim(shortId(id))}  ${settings.mode}`)
+  }
+  line()
+}
+
 export const mode: Command = {
   summary: "Pick how eunoe manages context",
   usage: "eunoe mode [default | compact | off] [--session <id>]",
@@ -40,31 +54,21 @@ export const mode: Command = {
   options: [["--session <id>", "Set the mode for just this session (repeatable; a unique prefix is enough)"]],
   async run(args) {
     const config = readConfig()
-    const given = args.find((arg, i) => !arg.startsWith("-") && args[i - 1] !== "--session") as Mode | undefined
+    const given = args.find((arg, i) => !arg.startsWith("-") && args[i - 1] !== "--session")
     const ids = sessionArgs(args)
     if (given) {
-      if (!MODES.includes(given)) fail(`Unknown mode: ${given}`, `Choose ${MODES.join(", ")}.`)
-      applyMode(given, ids)
+      if (!MODES.includes(given as Mode)) fail(`Unknown mode: ${given}`, `Choose ${MODES.join(", ")}.`)
+      applyMode(given as Mode, ids)
       return
     }
     const current = ids.length === 1 ? (config.sessions[ids[0]]?.mode ?? config.mode) : config.mode
-    if (!interactive) {
-      listModes(current)
-      const own = Object.entries(config.sessions).filter(([, settings]) => settings.mode)
-      if (own.length > 0) {
-        line()
-        for (const [id, settings] of own) line(`  ${c.dim(shortId(id))}  ${settings.mode}`)
-      }
-      line()
-      return
-    }
+    if (!interactive) return printModes(current)
     line()
     const chosen = await select(
       ids.length > 0 ? `Mode for ${ids.map(shortId).join(", ")}` : "Mode",
       MODES.map((value) => ({ value, hint: MODE_DESCRIPTIONS[value] })),
       current,
     )
-    if (chosen === null) return
-    applyMode(chosen, ids)
+    if (chosen !== null) applyMode(chosen, ids)
   },
 }

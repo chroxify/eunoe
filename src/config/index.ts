@@ -1,42 +1,108 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
-import { DEFAULTS, EUNOE_DIR, MODES, paths, SCOPES, SEARCH_MODES, TEXT_TUNABLES, TUNABLES, TURN_CAP_MIN, TURN_CAP_OFF } from "./constants"
-import type { Config, Mode, SessionSettings, Tunable, Tunables } from "./types"
+import { EUNOE_DIR, paths } from "./paths"
+
+export type Mode = "off" | "compact" | "default"
+export type SearchMode = "jsonl" | "markdown" | "xml" | "qmd"
+type Scope = "all" | "sessions"
+
+interface EvalConfig {
+  recallOptions?: { maxChars?: number; maxCharsMulti?: number; perQuery?: number }
+  strategy?: "tail" | "guide" | "trim"
+  rolling?: { keep: number; budget: number }
+  forceCut?: boolean
+  trustHeaders?: boolean
+  evidence?: boolean
+  recall?: boolean
+  rerank?: { model: string; candidates?: number; endpoint?: string }
+}
+
+export interface Tunables {
+  compactAt: number
+  keepTurns: number | "all"
+  keep: number
+  budget: number
+  turnCap: number | "off"
+  search: SearchMode
+  rerank: string
+}
+
+export type Tunable = keyof Tunables
+
+interface SessionSettings extends Partial<Tunables> {
+  mode?: Mode
+}
+
+export interface Config extends Tunables {
+  mode: Mode
+  scope: Scope
+  sessions: Record<string, SessionSettings>
+  port: number
+  upstream: string
+  claudeConfigDirs: string[]
+  window?: number
+  eval?: EvalConfig
+}
+
+export const DEFAULTS: Config = {
+  mode: "default",
+  scope: "all",
+  sessions: {},
+  port: 38663,
+  compactAt: 0.9,
+  keepTurns: "all",
+  keep: 3,
+  budget: 100_000,
+  turnCap: 100_000,
+  search: "markdown",
+  rerank: "jev-preview",
+  upstream: "https://api.anthropic.com",
+  claudeConfigDirs: [],
+}
+
+export const MODES: Mode[] = ["default", "compact", "off"]
+export const TUNABLES: Tunable[] = ["keep", "budget", "turnCap", "compactAt", "keepTurns", "search", "rerank"]
+
+const SEARCH_MODES: SearchMode[] = ["jsonl", "markdown", "xml", "qmd"]
+const TEXT_TUNABLES: Tunable[] = ["search", "rerank"]
+
+const isWhole = (value: unknown, min: number): value is number => Number.isInteger(value) && (value as number) >= min
 
 const validators: { [K in Tunable]: (value: unknown) => value is Tunables[K] } = {
   compactAt: (value): value is number => typeof value === "number" && value > 0 && value <= 1,
-  keepTurns: (value): value is number | "all" => value === "all" || (Number.isInteger(value) && (value as number) >= 0),
-  keep: (value): value is number => Number.isInteger(value) && (value as number) >= 1,
-  budget: (value): value is number => Number.isInteger(value) && (value as number) >= 1_000,
-  turnCap: (value): value is number | "off" => value === TURN_CAP_OFF || (Number.isInteger(value) && (value as number) >= TURN_CAP_MIN),
-  search: (value): value is Tunables["search"] => SEARCH_MODES.includes(value as Tunables["search"]),
+  keepTurns: (value): value is number | "all" => value === "all" || isWhole(value, 0),
+  keep: (value): value is number => isWhole(value, 1),
+  budget: (value): value is number => isWhole(value, 1_000),
+  turnCap: (value): value is number | "off" => value === "off" || isWhole(value, 1_000),
+  search: (value): value is SearchMode => SEARCH_MODES.includes(value as SearchMode),
   rerank: (value): value is string => typeof value === "string" && /^[\w.-]+$/.test(value),
 }
 
 const isMode = (value: unknown): value is Mode => MODES.includes(value as Mode)
 
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value)
+
 export function parseTunable<K extends Tunable>(key: K, raw: string): Tunables[K] | null {
-  const value = TEXT_TUNABLES.includes(key) || raw === "all" || raw === TURN_CAP_OFF ? raw : Number(raw.replace(/[_,]/g, ""))
+  const value = TEXT_TUNABLES.includes(key) || raw === "all" || raw === "off" ? raw : Number(raw.replace(/[_,]/g, ""))
   return validators[key](value) ? (value as Tunables[K]) : null
 }
 
 function normalizeSession(value: unknown): SessionSettings | null {
   if (value === null) return {}
   if (isMode(value)) return { mode: value }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null
-  const raw = value as Record<string, unknown>
-  const settings: SessionSettings = isMode(raw.mode) ? { mode: raw.mode } : {}
-  for (const key of TUNABLES) if (validators[key](raw[key])) Object.assign(settings, { [key]: raw[key] })
+  if (!isRecord(value)) return null
+  const settings: SessionSettings = isMode(value.mode) ? { mode: value.mode } : {}
+  for (const key of TUNABLES) if (validators[key](value[key])) Object.assign(settings, { [key]: value[key] })
   return settings
 }
 
 export function normalizeConfig(raw: Record<string, unknown>): Config {
   const config = { ...DEFAULTS, ...raw } as Config
   if (!isMode(config.mode)) config.mode = DEFAULTS.mode
-  if (!SCOPES.includes(config.scope)) config.scope = DEFAULTS.scope
+  if (config.scope !== "all" && config.scope !== "sessions") config.scope = DEFAULTS.scope
   for (const key of TUNABLES) if (!validators[key](config[key])) Object.assign(config, { [key]: DEFAULTS[key] })
-  const sessions = config.sessions && typeof config.sessions === "object" && !Array.isArray(config.sessions) ? config.sessions : {}
+  const sessions = isRecord(config.sessions) ? config.sessions : {}
   config.sessions = Object.fromEntries(
     Object.entries(sessions).flatMap(([id, value]) => {
       const settings = normalizeSession(value)
@@ -61,7 +127,7 @@ export function readConfig(): Config {
   let config = DEFAULTS
   try {
     config = normalizeConfig(JSON.parse(readFileSync(paths.config, "utf8")))
-  } catch (_error) {}
+  } catch {}
   cached = { mtimeMs, config }
   return config
 }
@@ -84,12 +150,14 @@ export function modeFor(config: Config, sessionId: string | null): Mode {
   return config.scope === "all" ? config.mode : "off"
 }
 
+export function compactionOwner(config: Config): Mode {
+  return modeFor(config, null)
+}
+
 export function overrides(settings: SessionSettings | undefined): Partial<Tunables> {
-  return Object.fromEntries(TUNABLES.filter((key) => settings?.[key] !== undefined).map((key) => [key, settings![key]]))
+  return Object.fromEntries(TUNABLES.filter((key) => settings?.[key] !== undefined).map((key) => [key, settings?.[key]]))
 }
 
 export function settingsFor(config: Config, sessionId: string | null): Config {
   return { ...config, ...overrides(sessionId ? config.sessions[sessionId] : undefined), mode: modeFor(config, sessionId) }
 }
-
-export const compactionOwner = (config: Config): Mode => modeFor(config, null)

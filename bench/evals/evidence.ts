@@ -1,12 +1,30 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { resultText } from "../../src/context/content"
-import { REREADABLE_TOOLS } from "../../src/context/fold/constants"
-import { toolPairs, turnEvidence } from "../../src/context/fold/evidence"
-import type { Message } from "../../src/context/types"
-import { COMPONENTS, TOOL_FACTS } from "../lib/constants"
-import { depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints, Tally } from "../lib/data"
-import { DEPTH_KEYS, EVIDENCE_TYPE_KEYS, EVIDENCE_VARIANTS } from "./constants"
+import { type Message, resultText } from "../../src/context/content"
+import { type EvidenceOptions, REREADABLE_TOOLS, toolPairs, turnEvidence } from "../../src/context/fold/evidence"
+import { COMPONENTS, DEPTH_KEYS, depthBucket, EVIDENCE_TYPE_KEYS, keyTokens, mentions, pct, plantedSessions, realPoints, Tally, TOOL_FACTS } from "../lib/data"
+
+const EVIDENCE_VARIANTS: Record<string, EvidenceOptions> = {
+  v1: { linesPerCall: 4, turnChars: 1_600, scanLines: 400, minScore: 3, ranked: false, labels: false },
+  default: {},
+  wide: { linesPerCall: 8, turnChars: 3_200 },
+  deep: { scanLines: 1_000_000 },
+  loose: { minScore: 2 },
+  alltools: { allTools: true },
+  "wide+deep": { linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
+  "wide+deep+loose": { linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000, minScore: 2 },
+  "wide+deep+alltools": { linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000, allTools: true },
+  "xwide+deep": { linesPerCall: 12, turnChars: 6_000, scanLines: 1_000_000 },
+  ranked: { ranked: true, linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
+  "ranked+labels": { ranked: true, labels: true, linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
+  "ranked+labels+loose": { ranked: true, labels: true, minScore: 2, linesPerCall: 8, turnChars: 3_200, scanLines: 1_000_000 },
+  "ranked+labels+loose 2k": { ranked: true, labels: true, minScore: 2, linesPerCall: 8, turnChars: 2_000, scanLines: 1_000_000 },
+  "ranked+labels+loose 12/4k": { ranked: true, labels: true, minScore: 2, linesPerCall: 12, turnChars: 4_000, scanLines: 1_000_000 },
+  floor0: { callFloor: 0 },
+  floor4: { callFloor: 4 },
+  "default 3k": { turnChars: 3_000 },
+  "default 6k": { turnChars: 6_000 },
+}
 
 function outputOf(turn: Message[], allTools: boolean): string {
   return toolPairs(turn)

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { clearedOutput } from "../src/context/constants"
+import type { Message } from "../src/context/content"
 import { appendSystem, clearToolResults, compactMessages, countToolResults, tailMessages, trimMessages } from "../src/context/fold/strategies"
 import { isPrompt, reduceTurn, splitTurns, turnFingerprint } from "../src/context/fold/turns"
-import type { Message } from "../src/context/types"
+import { clearedOutput } from "../src/context/prompts"
 import { call, reply, result, system, turn, user } from "./fixtures"
 
 const text = (messages: Message[]) => JSON.stringify(messages)

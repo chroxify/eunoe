@@ -1,6 +1,6 @@
 import { readFileSync, statSync } from "node:fs"
-import type { Message } from "../context/types"
-import { parseJsonl } from "./parse"
+import type { Message } from "../context/content"
+import { entryMessages, parseJsonl } from "./parse"
 
 let cached: { file: string; mtimeMs: number; messages: Message[] } | null = null
 
@@ -12,10 +12,7 @@ export function sessionMessages(file: string): Message[] {
     return []
   }
   if (cached?.file === file && cached.mtimeMs === mtimeMs) return cached.messages
-  const messages = parseJsonl(readFileSync(file, "utf8")).flatMap((entry): Message[] => {
-    if (entry.isSidechain || entry.isCompactSummary || (entry.type !== "user" && entry.type !== "assistant") || !entry.message) return []
-    return [{ role: entry.message.role, content: entry.message.content }]
-  })
+  const messages = entryMessages(parseJsonl(readFileSync(file, "utf8")).filter((entry) => !entry.isSidechain))
   cached = { file, mtimeMs, messages }
   return messages
 }

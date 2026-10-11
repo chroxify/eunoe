@@ -1,7 +1,30 @@
 import { writeFileSync } from "node:fs"
 import path from "node:path"
-import { SESSIONS, SMOKE_CWD, SMOKE_TURNS } from "./constants"
-import { type Meta, toSessionLines } from "./generate"
+import { type Meta, type Turn, toSessionLines } from "./generate"
+import { SESSIONS } from "./paths"
+
+const SMOKE_CWD = path.join(import.meta.dir, "..", "..")
+
+const SMOKE_TURNS: Turn[] = [
+  { turn: 1, user: "what does the proxy do with count_tokens requests", steps: [{ tool: "read", path: "src/proxy/server.ts", offset: 1, limit: 60 }], reply: "count_tokens requests are rewritten like messages but never trigger a cut." },
+  {
+    turn: 2,
+    user: "deploy the docs site to staging",
+    steps: [{ tool: "run", command: "bun run deploy:docs --env staging", output: "Building docs...\nUploaded 41 files\nDeployment ID: dpl_k7mq2xv9rt\nLive at https://docs-staging.internal" }],
+    reply: "The docs site is deployed to staging.",
+  },
+  { turn: 3, user: "from now on every branch must start with the prefix qor/ ok", steps: [{ tool: "git", args: "log --oneline -5" }], reply: "Understood." },
+  {
+    turn: 4,
+    user: "run the context tests",
+    steps: [
+      { tool: "run", command: "bun test test/context.test.ts", output: "running 18 tests\nFAIL test/context.test.ts\n  E_TORNIX_4410: fixture missing\n1 failed, 17 passed", failed: true },
+      { tool: "read", path: "test/fixtures.ts", limit: 40 },
+    ],
+    reply: "One test failed on a missing fixture; I restored it and the suite passes.",
+  },
+  { turn: 5, user: "ok summarize where we are", steps: [{ tool: "ls", path: "src" }], reply: "Docs are on staging, context tests pass, nothing else pending." },
+]
 
 const { lines, tokens } = toSessionLines(SMOKE_TURNS, { sessionId: crypto.randomUUID(), cwd: SMOKE_CWD, model: "claude-opus-5-5", start: Date.parse("2026-09-30T10:00:00Z") })
 writeFileSync(path.join(SESSIONS, "s99.jsonl"), `${lines.join("\n")}\n`)

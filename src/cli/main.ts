@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { VERSION } from "../constants"
+import { VERSION } from "../version"
 import { commands } from "./commands"
 import { wantsHelp } from "./terminal/args"
 import { printCommandHelp, printHelp } from "./terminal/help"

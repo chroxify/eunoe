@@ -111,7 +111,7 @@
       }
     },
     {
-      "includes": ["bench/**", "src/context/types.ts"],
+      "includes": ["bench/**", "src/context/content.ts"],
       "linter": {
         "rules": {
           "suspicious": {

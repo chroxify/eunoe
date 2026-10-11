@@ -1,13 +1,39 @@
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
-import type { RecallChunk, RecallPick } from "../../src/context/recall/types"
-import { claude } from "../lib/claude"
-import { COMPONENTS, NO_TOOLS, OUT, TOOL_FACTS } from "../lib/constants"
-import { keyTokens, mentions, plantedSessions, realPoints, Tally } from "../lib/data"
+import { type RecallChunk, type RecallPick, rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
+import { claude, NO_TOOLS, OUT } from "../lib/claude"
+import { COMPONENTS, keyTokens, mentions, PLANTED_KEYS, plantedSessions, REAL_KEYS, realPoints, Tally, TOOL_FACTS } from "../lib/data"
 import { jev, jevStats } from "../lib/jev"
-import { CROSS_ENCODERS, EMBED_CACHE, EMBEDDERS, JEV_TERM_POOL, PARAPHRASE, PARAPHRASE_FILE, PLANTED_KEYS, REAL_KEYS, RETRIEVAL_ARM_FILTER, RETRIEVAL_CANDIDATES, RETRIEVAL_TOP } from "./constants"
+
+const RETRIEVAL_TOP = Number(process.env.RETRIEVAL_TOP ?? 12)
+
+const RETRIEVAL_CANDIDATES = Number(process.env.RETRIEVAL_CANDIDATES ?? 30)
+
+const RETRIEVAL_ARM_FILTER = (process.env.RETRIEVAL_ARMS ?? "").split(",").filter(Boolean)
+
+const EMBED_CACHE = path.join(COMPONENTS, "embed-cache")
+
+const JEV_TERM_POOL = 40
+
+const PARAPHRASE = process.env.RETRIEVAL_PARAPHRASE === "1"
+
+const PARAPHRASE_FILE = path.join(COMPONENTS, "paraphrase-cache.json")
+
+const EMBEDDERS: Record<string, { model: string; query: string; doc: string; pooling: "mean" | "cls"; dtype?: string }> = {
+  minilm: { model: "Xenova/all-MiniLM-L6-v2", query: "", doc: "", pooling: "mean" },
+  "bge-small": { model: "Xenova/bge-small-en-v1.5", query: "Represent this sentence for searching relevant passages: ", doc: "", pooling: "cls" },
+  "bge-base": { model: "Xenova/bge-base-en-v1.5", query: "Represent this sentence for searching relevant passages: ", doc: "", pooling: "cls" },
+  "e5-small": { model: "Xenova/e5-small-v2", query: "query: ", doc: "passage: ", pooling: "mean" },
+  "gte-small": { model: "Xenova/gte-small", query: "", doc: "", pooling: "mean" },
+  nomic: { model: "nomic-ai/nomic-embed-text-v1.5", query: "search_query: ", doc: "search_document: ", pooling: "mean", dtype: "fp32" },
+}
+
+const CROSS_ENCODERS: Record<string, string> = {
+  "ce-minilm": "Xenova/ms-marco-MiniLM-L-6-v2",
+  "ce-bge": "Xenova/bge-reranker-base",
+  "ce-mxbai": "mixedbread-ai/mxbai-rerank-xsmall-v1",
+}
 
 type Ranker = (question: string, chunks: RecallChunk[], corpusKey: string) => Promise<number[]>
 interface Arm {

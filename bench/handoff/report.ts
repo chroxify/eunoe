@@ -1,7 +1,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { loadMetas } from "../planted/run"
-import { HANDOFF_ARMS, RUNS, SCENARIOS } from "./constants"
+import { HANDOFF_ARMS, SCENARIOS } from "./arms"
+import { RUNS } from "./paths"
 import type { HandoffResult } from "./run"
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)

@@ -1,9 +1,13 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
-import { claude } from "../lib/claude"
-import { NO_TOOLS } from "../lib/constants"
+import path from "node:path"
+import { claude, NO_TOOLS } from "../lib/claude"
 import { extractJson } from "../lib/json"
-import { HANDOFF_OUT, LABEL_MODEL, LABELS_FILE } from "./constants"
+import { HANDOFF_OUT } from "./paths"
 import { type Label, type RealCase, realCases } from "./real-cases"
+
+const LABELS_FILE = path.join(HANDOFF_OUT, "labels.json")
+
+const LABEL_MODEL = "claude-sonnet-5-5"
 
 const PARALLEL = Number(process.argv.find((a) => a.startsWith("--parallel="))?.slice(11) ?? 4)
 const labels: Record<string, Label> = existsSync(LABELS_FILE) ? JSON.parse(readFileSync(LABELS_FILE, "utf8")) : {}

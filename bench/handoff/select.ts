@@ -5,8 +5,13 @@ import { rank, terms } from "../../src/context/recall"
 import { sessionMessages } from "../../src/transcript/messages"
 import { jev } from "../lib/jev"
 import { loadMetas } from "../planted/run"
-import { HANDOFF_OUT, PROMPTS, SCENARIOS, SELECT_EMBED_CACHE, SELECT_SKIP } from "./constants"
+import { SCENARIOS } from "./arms"
+import { HANDOFF_OUT, PROMPTS } from "./paths"
 import { outline, sessionFile } from "./prepare"
+
+const SELECT_EMBED_CACHE = path.join(HANDOFF_OUT, "select-embed.json")
+
+const SELECT_SKIP = (process.env.SELECT_SKIP ?? "").split(",").filter(Boolean)
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 const split = arg("split") ?? "all"

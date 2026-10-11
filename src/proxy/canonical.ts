@@ -1,21 +1,29 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import type { Body } from "../context/types"
-import { BILLING_LINE } from "./constants"
-import type { Canonical, CanonicalResult } from "./types"
+import type { Body } from "../context/content"
 
-const billingLine = (system: Body["system"]) => {
+interface Canonical {
+  system: Body["system"]
+  tools: Body["tools"]
+}
+
+export interface CanonicalResult {
+  body: Body
+  status: "applied" | "captured" | "skipped"
+}
+
+const BILLING_LINE = /^x-anthropic-billing-header:[^\n]*/
+
+function billingLine(system: Body["system"]): string | null {
   const first = Array.isArray(system) ? String(system[0]?.text ?? "") : String(system ?? "")
   return first.match(BILLING_LINE)?.[0] ?? null
 }
 
 function withBilling(system: Body["system"], line: string | null): Body["system"] {
   if (!line) return system
-  if (Array.isArray(system)) {
-    const [first, ...rest] = system
-    return [{ ...first, text: String(first?.text ?? "").replace(BILLING_LINE, line) }, ...rest]
-  }
-  return String(system ?? "").replace(BILLING_LINE, line)
+  if (!Array.isArray(system)) return String(system ?? "").replace(BILLING_LINE, line)
+  const [first, ...rest] = system
+  return [{ ...first, text: String(first?.text ?? "").replace(BILLING_LINE, line) }, ...rest]
 }
 
 export function applyCanonical(body: Body, file: string): CanonicalResult {

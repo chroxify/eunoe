@@ -1,7 +1,7 @@
 import { readConfig } from "../../config"
+import type { Command } from "../command"
 import { runWatch } from "../proxy/watch"
 import { line } from "../terminal/ui"
-import type { Command } from "../types"
 
 export const watch: Command = {
   summary: "Check the proxy once and unroute Claude Code while it is down",

@@ -1,25 +1,47 @@
 import path from "node:path"
-import { claudeConfigDirs, readConfig, settingsFor } from "../config"
-import type { Config } from "../config/types"
-import { VERSION } from "../constants"
-import { wellFormed } from "../context/content"
-import type { Body } from "../context/types"
+import { type Config, claudeConfigDirs, readConfig, settingsFor } from "../config"
+import { type Body, wellFormed } from "../context/content"
 import { findSessionFile } from "../transcript/locate"
 import { prepareTranscript } from "../transcript/search"
+import { VERSION } from "../version"
 import { applyCanonical } from "./canonical"
-import { CANONICAL_HEADER, HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, OVERFLOW_MARGIN, PROMPT_TOO_LONG, SESSION_HEADER, TRANSCRIPT_HEADER, UPSTREAM_ERROR_STATUS, WINDOW_HEADER } from "./constants"
 import { sizeOf } from "./estimate"
-import { contextFingerprint } from "./fingerprint"
+import { type ContextFingerprint, contextFingerprint } from "./fingerprint"
 import { logRequest } from "./log"
 import { rewriteAsync } from "./rewrite"
 import { recordSession } from "./sessions"
 import { readState, saveState } from "./state"
-import type { Health, Outgoing } from "./types"
 import { inputTokens, watchUsage } from "./usage"
 import { resolveWindow } from "./window"
 
+export interface Health {
+  ok: boolean
+  version: string
+  mode: Config["mode"]
+  pid: number
+  startedAt?: number
+}
+
+interface Outgoing {
+  note: Record<string, unknown>
+  threadKey: string | null
+  bodyText: string | undefined
+  sentSize: number
+  givenSize: number
+  fixedSize: number
+  sent: (ContextFingerprint & { session: string | null }) | null
+}
+
+export const HEALTH_PATH = "/_eunoe/health"
+
+const startedAt = Date.now()
+
+const trustedHeader = (request: Request, config: Config, name: string) => (config.eval?.trustHeaders === true ? request.headers.get(`x-eunoe-${name}`) : null)
+
+const clipped = (error: string) => error.slice(0, 500)
+
 function sessionIdOf(headers: Headers, body: Body): string | null {
-  const header = headers.get(SESSION_HEADER)
+  const header = headers.get("x-claude-code-session-id")
   if (header) return header
   try {
     return JSON.parse(body.metadata?.user_id ?? "{}").session_id ?? null
@@ -35,10 +57,8 @@ function forwardableHeaders(headers: Headers) {
   return out
 }
 
-const startedAt = Date.now()
-
-function tooLong(errorText: string): number | null {
-  const tokens = Number(errorText.match(PROMPT_TOO_LONG)?.[1])
+function overflowTokens(errorText: string): number | null {
+  const tokens = Number(errorText.match(/prompt is too long[^0-9]*(\d+)\s*tokens?\s*>\s*(\d+)/i)?.[1])
   return Number.isFinite(tokens) && tokens > 0 ? tokens : null
 }
 
@@ -46,46 +66,51 @@ async function prepare(request: Request, body: Body, base: Config, isCountTokens
   const sessionId = sessionIdOf(request.headers, body)
   const config = settingsFor(base, sessionId)
   const trusted = config.eval?.trustHeaders === true
-  const transcriptOverride = trusted ? request.headers.get(TRANSCRIPT_HEADER) : null
+  const transcriptOverride = trustedHeader(request, config, "transcript")
   const sessionFile = transcriptOverride ?? (sessionId ? findSessionFile(sessionId, claudeConfigDirs(config)) : null)
   if (sessionId && !trusted) recordSession(sessionId, config.mode, sessionFile)
   if (config.mode === "off") return rewriteAsync({ body, sessionId, config, transcript: null, window: null, mayCompact: false })
-  const transcript = sessionFile && sessionId ? prepareTranscript(config.search, sessionFile, transcriptOverride ? path.basename(transcriptOverride, ".jsonl") : sessionId) : null
+  const transcriptKey = transcriptOverride ? path.basename(transcriptOverride, ".jsonl") : sessionId
+  const transcript = sessionFile && sessionId && transcriptKey ? prepareTranscript(config.search, sessionFile, transcriptKey) : null
   const needsWindow = !config.eval?.strategy || config.eval.strategy === "tail"
-  const windowOverride = trusted ? Number(request.headers.get(WINDOW_HEADER)) || null : null
-  const resolved = needsWindow && (await resolveWindow(body.model, request.headers, config.upstream))
-  const window = windowOverride ?? config.window ?? (resolved || null)
+  const windowOverride = Number(trustedHeader(request, config, "window")) || null
+  let resolved: number | null = null
+  if (needsWindow) resolved = await resolveWindow(body.model, request.headers, config.upstream)
   return rewriteAsync({
     body,
     sessionId,
     config,
     transcript,
-    window,
+    window: windowOverride ?? config.window ?? resolved,
     mayCompact: !isCountTokens,
-    omittedBefore: trusted ? Number(request.headers.get(OMITTED_BEFORE_HEADER) ?? 0) : 0,
+    omittedBefore: Number(trustedHeader(request, config, "omitted-before") ?? 0),
   })
+}
+
+function saveRatio(threadKey: string, ratio: (previous: number | undefined) => number) {
+  const state = readState(threadKey)
+  state.ratio = ratio(state.ratio)
+  saveState(threadKey, state)
 }
 
 export async function handle(request: Request): Promise<Response> {
   try {
     return await route(request)
   } catch (error) {
-    logRequest({ path: new URL(request.url).pathname, status: UPSTREAM_ERROR_STATUS, action: "upstream-unreachable", error: String(error).slice(0, LOGGED_ERROR_CHARS) })
-    return Response.json({ type: "error", error: { type: "api_error", message: `eunoe could not reach the API: ${String(error)}` } }, { status: UPSTREAM_ERROR_STATUS })
+    logRequest({ path: new URL(request.url).pathname, status: 502, action: "upstream-unreachable", error: clipped(String(error)) })
+    return Response.json({ type: "error", error: { type: "api_error", message: `eunoe could not reach the API: ${String(error)}` } }, { status: 502 })
   }
 }
 
 async function route(request: Request): Promise<Response> {
   const config = readConfig()
   const url = new URL(request.url)
-  if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid, startedAt: startedAt } satisfies Health)
+  if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid, startedAt } satisfies Health)
   const headers = new Headers(request.headers)
-  headers.delete("host")
-  headers.delete("content-length")
-  headers.delete("accept-encoding")
+  for (const name of ["host", "content-length", "accept-encoding"]) headers.delete(name)
 
-  const hasBody = request.method !== "GET" && request.method !== "HEAD"
-  const givenText = await (hasBody ? request.text() : Promise.resolve(undefined))
+  let givenText: string | undefined
+  if (request.method !== "GET" && request.method !== "HEAD") givenText = await request.text()
   const isMessages = request.method === "POST" && url.pathname.startsWith("/v1/messages")
   const isCountTokens = url.pathname.includes("count_tokens")
 
@@ -94,10 +119,9 @@ async function route(request: Request): Promise<Response> {
     if (!givenText || !isMessages) return passthrough
     try {
       const given = JSON.parse(givenText) as Body
-      const canonicalFile = config.eval?.trustHeaders ? request.headers.get(CANONICAL_HEADER) : null
+      const canonicalFile = trustedHeader(request, config, "canonical")
       const canonical = canonicalFile ? applyCanonical(given, canonicalFile) : null
-      const body = canonical?.body ?? given
-      const result = await prepare(request, body, config, isCountTokens)
+      const result = await prepare(request, canonical?.body ?? given, config, isCountTokens)
       const sentSize = sizeOf(result.body)
       return {
         note: canonical ? { ...result.note, canonical: canonical.status } : result.note,
@@ -116,26 +140,26 @@ async function route(request: Request): Promise<Response> {
 
   let out = await build()
   let upstream = await send(out.bodyText)
-  const errorResponse = (text: string, status: number) => new Response(text, { status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
+  const errorResponse = (text: string) => new Response(text, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
 
   if (upstream.status >= 400 && out.note.action !== "pass") {
     const errorText = await upstream.text()
-    const overflow = tooLong(errorText)
+    const overflow = overflowTokens(errorText)
+    const logged = { path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note }
     if (!overflow || !out.threadKey || out.sentSize === 0 || isCountTokens) {
-      logRequest({ path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note, error: errorText.slice(0, LOGGED_ERROR_CHARS) })
-      return errorResponse(errorText, upstream.status)
+      logRequest({ ...logged, error: clipped(errorText) })
+      return errorResponse(errorText)
     }
-    const state = readState(out.threadKey)
-    state.ratio = Math.max(state.ratio ?? 0, overflow / out.sentSize) * OVERFLOW_MARGIN
-    saveState(out.threadKey, state)
-    logRequest({ path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note, overflow, error: errorText.slice(0, LOGGED_ERROR_CHARS) })
+    const sentSize = out.sentSize
+    saveRatio(out.threadKey, (previous) => Math.max(previous ?? 0, overflow / sentSize) * 1.1)
+    logRequest({ ...logged, overflow, error: clipped(errorText) })
     out = await build()
     out = { ...out, note: { ...out.note, healed: overflow } }
     upstream = await send(out.bodyText)
     if (upstream.status >= 400) {
       const retryError = await upstream.text()
-      logRequest({ path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note, error: retryError.slice(0, LOGGED_ERROR_CHARS) })
-      return errorResponse(retryError, upstream.status)
+      logRequest({ path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note, error: clipped(retryError) })
+      return errorResponse(retryError)
     }
   }
 
@@ -162,14 +186,10 @@ async function route(request: Request): Promise<Response> {
       charsFixed: fixedSize,
       ...(sent && { context: sent }),
     })
-    if (threadKey && input > 0 && sentSize > 0) {
-      const state = readState(threadKey)
-      state.ratio = input / sentSize
-      saveState(threadKey, state)
-    }
+    if (threadKey && input > 0 && sentSize > 0) saveRatio(threadKey, () => input / sentSize)
   })
 }
 
 export function serve(port: number) {
-  return Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: IDLE_TIMEOUT_SECONDS, fetch: handle })
+  return Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: 255, fetch: handle })
 }

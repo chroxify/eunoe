@@ -5,10 +5,24 @@ import { blocks } from "../../src/context/content"
 import { isPrompt, splitTurns } from "../../src/context/fold/turns"
 import { rank, terms } from "../../src/context/recall"
 import { sessionMessages } from "../../src/transcript/messages"
-import { claude } from "../lib/claude"
-import { NO_TOOLS } from "../lib/constants"
+import { claude, NO_TOOLS } from "../lib/claude"
 import { jev } from "../lib/jev"
-import { HANDOFF_OUT, REAL_RESUME, SELECT_REAL_OUT } from "./constants"
+import { HANDOFF_OUT } from "./paths"
+
+const SELECT_REAL_OUT = path.join(HANDOFF_OUT, "select-real")
+
+const REAL_RESUME = (s: Real, scenario: string) => `A developer is opening a brand-new Claude Code session on the project below, days after an earlier session, and types the first message. Write that first message.
+
+Session title: ${s.title}
+What happened in the earlier session, turn by turn (the developer's messages):
+${s.outline.slice(0, 30_000)}
+
+Scenario "${scenario}":
+${scenario === "bug" ? "They are coming back to fix one specific bug in something that earlier session built. Pick a plausible, concrete problem in that work and describe it the way a person who half-remembers the session would: the symptom, roughly where it is, nothing more." : "They want to pick the work up where it was left and keep going. Say what they want to continue with, in their own words, without a precise checklist."}
+
+Hard rules: one to three sentences, in the developer's own voice and register as seen in their messages. Never quote exact identifiers, hashes, IDs, URLs, flags or numbers from the session. Do not mention that an earlier session exists or ask the agent to read a transcript.
+
+Reply with only the message text.`
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 const MAX = Number(arg("max") ?? 40)

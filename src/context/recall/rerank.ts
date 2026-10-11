@@ -1,11 +1,13 @@
 import { existsSync, readFileSync } from "node:fs"
-import { paths } from "../../config/constants"
-import { RERANK_ENDPOINT, RERANK_LINE_CHARS, RERANK_TIMEOUT_MS } from "./constants"
-import type { RecallChunk, Reranker } from "./types"
+import { paths } from "../../config/paths"
+import { rerankQuestion } from "../prompts"
+import type { RecallChunk, Reranker } from "."
 
 interface RerankAnswer {
   answers?: { where?: { probabilities?: Record<string, number> } }
 }
+
+const TIMEOUT_MS = 4_000
 
 export function rerankKey(): string | null {
   const env = process.env.TYPESAFE_API_KEY?.trim()
@@ -14,7 +16,12 @@ export function rerankKey(): string | null {
 }
 
 function rerankState(chunks: RecallChunk[], candidates: number[]): string {
-  return candidates.map((index, n) => `### ${n}\n[turn ${chunks[index].turn}] ${chunks[index].call}\n${chunks[index].lines.map((l) => l.slice(0, RERANK_LINE_CHARS)).join("\n")}`).join("\n\n")
+  return candidates
+    .map((index, n) => {
+      const chunk = chunks[index]
+      return `### ${n}\n[turn ${chunk.turn}] ${chunk.call}\n${chunk.lines.map((l) => l.slice(0, 240)).join("\n")}`
+    })
+    .join("\n\n")
 }
 
 export function orderByProbability(candidates: number[], probabilities: Record<string, number>): number[] {
@@ -24,19 +31,28 @@ export function orderByProbability(candidates: number[], probabilities: Record<s
     .map((n) => candidates[n])
 }
 
-export function jevReranker(model: string, key: string, endpoint = RERANK_ENDPOINT, onError?: (reason: string) => void): Reranker {
+function failureReason(error: unknown): string {
+  if (!(error instanceof Error)) return String(error)
+  return error.name === "TimeoutError" ? `timeout after ${TIMEOUT_MS}ms` : error.message
+}
+
+export function jevReranker(model: string, key: string, endpoint = "https://api.typesafe.ai/v1/systemone", onError?: (reason: string) => void): Reranker {
   return async (query, chunks, candidates) => {
     if (candidates.length < 2) return candidates
     try {
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-        signal: AbortSignal.timeout(RERANK_TIMEOUT_MS),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
         body: JSON.stringify({
           model,
           state: rerankState(chunks, candidates),
           questions: {
-            where: { type: "choice", instructions: `Which excerpt contains the exact answer to the developer's question about this coding session: "${query}"?`, criteria: Object.fromEntries(candidates.map((_, n) => [String(n), null])) },
+            where: {
+              type: "choice",
+              instructions: rerankQuestion(query),
+              criteria: Object.fromEntries(candidates.map((_, n) => [String(n), null])),
+            },
           },
         }),
       })
@@ -48,7 +64,7 @@ export function jevReranker(model: string, key: string, endpoint = RERANK_ENDPOI
       const probabilities = ((await response.json()) as RerankAnswer).answers?.where?.probabilities
       return probabilities && typeof probabilities === "object" ? orderByProbability(candidates, probabilities) : candidates
     } catch (error) {
-      onError?.(error instanceof Error ? (error.name === "TimeoutError" ? `timeout after ${RERANK_TIMEOUT_MS}ms` : error.message) : String(error))
+      onError?.(failureReason(error))
       return candidates
     }
   }

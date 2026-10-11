@@ -558,7 +558,7 @@ injected characters per message.
 A variant is adopted when it raises planted coverage without lowering real
 coverage, at a cost that stays under roughly 1,000 characters per folded turn
 (evidence) or 5,000 per message (recall). Ties go to the cheaper variant. The
-adopted settings become the defaults in `src/context/constants.ts`; the
+adopted settings become the defaults in `src/context/fold/evidence.ts` and `src/context/recall/index.ts`; the
 previous defaults stay in the evals as `v1` so the gain is always visible.
 
 Adopting a component change does not change a published result: rolling+both

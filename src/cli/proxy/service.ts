@@ -1,20 +1,25 @@
+import { homedir } from "node:os"
 import path from "node:path"
-import { paths } from "../../config/constants"
-import type { Config } from "../../config/types"
-import type { Health } from "../../proxy/types"
+import type { Config } from "../../config"
+import { paths } from "../../config/paths"
+import type { Health } from "../../proxy/server"
 import { c, line, ok, warn } from "../terminal/ui"
 import { proxyUrl } from "./claude-settings"
-import { PROXY_AGENT, START_POLL_MS, START_TIMEOUT_MS, WATCH_AGENT } from "./constants"
 import { probe, runsStaleCode } from "./inspect"
 import * as launchd from "./launchd"
+
+const agentFor = (label: string, interval?: number): launchd.Agent => ({ label, plist: path.join(homedir(), "Library", "LaunchAgents", `${label}.plist`), interval })
+
+export const PROXY_AGENT = agentFor("com.chroxify.eunoe")
+const WATCH_AGENT = agentFor("com.chroxify.eunoe.watch", 10)
 
 const cli = () => path.resolve(process.argv[1] ?? "")
 
 async function waitFor(port: number, ready: (health: Health | null) => boolean) {
-  const deadline = Date.now() + START_TIMEOUT_MS
+  const deadline = Date.now() + 3_000
   while (Date.now() < deadline) {
     if (ready(await probe(port))) return true
-    await Bun.sleep(START_POLL_MS)
+    await Bun.sleep(150)
   }
   return false
 }

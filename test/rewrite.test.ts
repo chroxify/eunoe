@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { SESSIONS_SECTION } from "../src/context/constants"
+import type { Body, Message } from "../src/context/content"
 import { splitTurns, turnFingerprint } from "../src/context/fold/turns"
-import type { Body, Message } from "../src/context/types"
-import { messageFingerprint, rewrite, rewriteAsync } from "../src/proxy/rewrite"
+import { SYSTEM_PROMPT } from "../src/context/prompts"
+import { messageFingerprint } from "../src/proxy/fingerprint"
+import { rewrite, rewriteAsync } from "../src/proxy/rewrite"
 import { saveState } from "../src/proxy/state"
 import { call, config, freshSession, reply, result, session, transcript, turn, user } from "./fixtures"
 
@@ -202,12 +203,12 @@ describe("default", () => {
 })
 
 describe("earlier sessions", () => {
-  const sections = (b: Body) => (Array.isArray(b.system) ? b.system : [{ text: b.system }]).filter((block: any) => block.text === SESSIONS_SECTION).length
+  const sections = (b: Body) => (Array.isArray(b.system) ? b.system : [{ text: b.system }]).filter((block: any) => block.text === SYSTEM_PROMPT).length
 
   test("every agent request carries the one section that teaches the session commands, cached at the end of the system prompt", () => {
     const out = run(body(session(3)))
     expect(sections(out.body)).toBe(1)
-    expect((out.body.system as any[]).at(-1).text).toBe(SESSIONS_SECTION)
+    expect((out.body.system as any[]).at(-1).text).toBe(SYSTEM_PROMPT)
     const cached = run({ ...body(session(3)), system: [{ type: "text", text: "s", cache_control: { type: "ephemeral" } }] })
     expect((cached.body.system as any[]).at(-1).cache_control).toEqual({ type: "ephemeral" })
     expect((cached.body.system as any[])[0].cache_control).toBeUndefined()

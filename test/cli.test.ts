@@ -2,8 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { editSettings, proxyUrl, withCompactionOwner, withEunoe, withoutEunoe } from "../src/cli/proxy/claude-settings"
-import { BLOCKING_LIMIT_ENV, BLOCKING_LIMIT_OFF } from "../src/cli/proxy/constants"
+import { BLOCKING_LIMIT_ENV, BLOCKING_LIMIT_OFF, editSettings, proxyUrl, withCompactionOwner, withEunoe, withoutEunoe } from "../src/cli/proxy/claude-settings"
 
 describe("Claude settings edits", () => {
   test("install routes through eunoe and hands compaction to it, keeping everything else", () => {
@@ -66,10 +65,10 @@ describe("terminal output", () => {
 
 describe("logo", () => {
   test("pixel rows are even in count, equal in width and only use known colours", async () => {
-    const { LOGO_KEYS, LOGO_PALETTE, LOGO_PIXELS } = await import("../src/cli/logo/constants")
-    expect(LOGO_PIXELS.length % 4).toBe(0)
-    expect(new Set(LOGO_PIXELS.map((row) => row.length)).size).toBe(1)
-    expect(LOGO_KEYS.length).toBe(LOGO_PALETTE.length)
-    for (const key of LOGO_PIXELS.join("").replaceAll(".", "")) expect(LOGO_KEYS).toContain(key)
+    const { KEYS, PALETTE, PIXELS } = await import("../src/cli/logo/art")
+    expect(PIXELS.length % 4).toBe(0)
+    expect(new Set(PIXELS.map((row) => row.length)).size).toBe(1)
+    expect(KEYS.length).toBe(PALETTE.length)
+    for (const key of PIXELS.join("").replaceAll(".", "")) expect(KEYS).toContain(key)
   })
 })

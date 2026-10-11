@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { DEPTH_BUCKETS, RUNS } from "./constants"
-import { bucketOf, type FactType } from "./facts"
+import { bucketOf, DEPTH_BUCKETS, type FactType } from "./facts"
+import { RUNS } from "./paths"
 import { type ArmResult, loadMetas, verdict } from "./run"
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)

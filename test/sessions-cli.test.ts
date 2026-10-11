@@ -4,7 +4,7 @@ import path from "node:path"
 import { load, loadedLine, writeLoaded } from "../src/cli/commands/load"
 import { candidateOf, continuePrompt } from "../src/cli/sessions"
 import { rankCandidates, sessionCandidates } from "../src/cli/sessions/source"
-import { paths } from "../src/config/constants"
+import { paths } from "../src/config/paths"
 import { recordSession } from "../src/proxy/sessions"
 
 const CWD = "/repo/sessions-cli"

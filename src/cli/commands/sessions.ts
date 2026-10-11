@@ -1,25 +1,25 @@
 import { readConfig } from "../../config"
+import type { Command } from "../command"
 import { routedDirs } from "../proxy/inspect"
-import { askOf, candidatesHere, continuePrompt, copy, shortId, tokensOf } from "../sessions"
-import { browse, filterCandidates } from "../sessions/browse"
-import { UNTITLED } from "../sessions/constants"
-import type { SessionCandidate } from "../sessions/types"
+import { askOf, candidatesHere, continuePrompt, copy, metaOf, shortId } from "../sessions"
+import { browse, filterCandidates, UNTITLED } from "../sessions/browse"
+import type { SessionCandidate } from "../sessions/source"
 import { interactive } from "../terminal/prompt"
-import { ago, c, fail, line, ok, warn, wrap } from "../terminal/ui"
-import type { Command } from "../types"
-import { ASK_INDENT, ASK_MAX_WIDTH, ASK_MIN_WIDTH } from "./constants"
+import { c, fail, line, ok, warn, wrap } from "../terminal/ui"
 
-const askWidth = () => Math.max(ASK_MIN_WIDTH, Math.min(ASK_MAX_WIDTH, (process.stdout.columns ?? ASK_MAX_WIDTH + ASK_INDENT) - ASK_INDENT - 12))
+const INDENT = 6
+
+const askWidth = () => Math.max(40, Math.min(100, (process.stdout.columns ?? 100 + INDENT) - INDENT - 12))
 
 function ask(label: string, text: string | undefined) {
   const [first = "", ...rest] = wrap(askOf(text), askWidth())
-  line(`${" ".repeat(ASK_INDENT)}${c.dim(label)}  ${first}`)
-  for (const more of rest) line(`${" ".repeat(ASK_INDENT + label.length + 2)}${more}`)
+  line(`${" ".repeat(INDENT)}${c.dim(label)}  ${first}`)
+  for (const more of rest) line(`${" ".repeat(INDENT + label.length + 2)}${more}`)
 }
 
 function show(cand: SessionCandidate) {
   const title = cand.label ? c.bold(cand.label) : c.dim(UNTITLED)
-  line(`  ${c.cyan(shortId(cand.id))}  ${title}  ${c.dim(`${cand.asks.length} turns · ~${tokensOf(cand)} tokens · ${ago(new Date(cand.mtime).toISOString())}`)}`)
+  line(`  ${c.cyan(shortId(cand.id))}  ${title}  ${c.dim(metaOf(cand))}`)
   ask("first", cand.asks[0])
   ask("last ", cand.asks.at(-1))
   line()

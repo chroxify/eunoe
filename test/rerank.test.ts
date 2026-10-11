@@ -1,8 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { pickRecallWith, recallChunks } from "../src/context/recall"
+import type { Message } from "../src/context/content"
+import { pickRecallWith, type Reranker, recallChunks } from "../src/context/recall"
 import { jevReranker, orderByProbability } from "../src/context/recall/rerank"
-import type { Reranker } from "../src/context/recall/types"
-import type { Message } from "../src/context/types"
 import { prefetchRecall, rewrite } from "../src/proxy/rewrite"
 import { config, freshSession, reply, user } from "./fixtures"
 

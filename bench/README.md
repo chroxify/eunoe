@@ -279,7 +279,7 @@ A run on regenerated sessions or questions is a new benchmark, not a rerun.
 
 ### Adding an arm
 
-Add it to `constants.ts` with its own proxy name and port. Develop on the
+Add it to `ARMS` in `arms.ts` with its own proxy name and port. Develop on the
 development split, run the held-out split once for a frozen configuration
 and record which one (SPEC A3). Write the hypothesis into the spec before
 running and let the scorer report against it. For a change to one component,
@@ -293,7 +293,7 @@ has no business in an end-to-end run.
 | `SPEC.md` | The pre-registered design: planted suite (A), real-session suite (B), component evals (C), dated amendments (D). Read first. |
 | `RESULTS.md` | The report against the spec: headline, every arm, every component, corrections, limits, decision. |
 | `results/` | The reviewed tables the report quotes. Committed. |
-| `constants.ts`, `arms.ts` | Every arm as an eunoe `config.json`, with its proxy name and port. Both suites share them. |
+| `arms.ts` | Every arm as an eunoe `config.json`, with its proxy name and port. Both suites share them. |
 | `planted/` | The planted-fact suite: generation, runs, exact-match scoring, report. |
 | `real/` | The real-session suite: cut points, questions, runs, judges, continuation in worktrees. |
 | `evals/` | The component evals: evidence pickers, recall rankers, the budget simulation. |

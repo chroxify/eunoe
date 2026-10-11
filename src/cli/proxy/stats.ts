@@ -1,7 +1,27 @@
-import { STATUS_WINDOW_MS, THREAD_SUFFIX } from "./constants"
-import type { RequestRecord, SessionStats, Totals } from "./types"
+import type { RequestRecord } from "./inspect"
 
-const sessionOf = (record: RequestRecord): string | null => (typeof record.thread === "string" ? record.thread.replace(THREAD_SUFFIX, "") : null)
+export interface SessionStats {
+  context: number
+  fixed: number | null
+  plain: number | null
+  turns: number | null
+  requests: number
+  folds: number
+  lastSeen: string
+}
+
+export interface Totals {
+  requests: number
+  cacheRead: number
+  cacheWrite: number
+  uncached: number
+  folds: number
+  lastFold: string | null
+  sent: number
+  saved: number
+}
+
+const sessionOf = (record: RequestRecord): string | null => (typeof record.thread === "string" ? record.thread.replace(/-[0-9a-f]{24}$/, "") : null)
 
 const inputOf = (record: RequestRecord) => record.input ?? 0
 
@@ -11,10 +31,7 @@ function scaled(record: RequestRecord, chars: number | undefined): number | null
   return input > 0 && charsOut > 0 && chars && chars > 0 ? Math.round((input * chars) / charsOut) : null
 }
 
-const fixedTokens = (record: RequestRecord) => scaled(record, record.charsFixed)
-const plainTokens = (record: RequestRecord) => scaled(record, record.charsIn)
-
-export function withinWindow(records: RequestRecord[], now = Date.now(), window = STATUS_WINDOW_MS): RequestRecord[] {
+export function withinWindow(records: RequestRecord[], now = Date.now(), window = 24 * 3_600_000): RequestRecord[] {
   return records.filter((record) => now - Date.parse(record.ts) <= window)
 }
 
@@ -26,8 +43,8 @@ export function perSession(records: RequestRecord[]): Map<string, SessionStats> 
     const previous = stats.get(id)
     stats.set(id, {
       context: inputOf(record),
-      fixed: fixedTokens(record),
-      plain: plainTokens(record),
+      fixed: scaled(record, record.charsFixed),
+      plain: scaled(record, record.charsIn),
       turns: record.turns ?? previous?.turns ?? null,
       requests: (previous?.requests ?? 0) + 1,
       folds: (previous?.folds ?? 0) + (record.compacted ? 1 : 0),
@@ -49,7 +66,7 @@ export function totals(records: RequestRecord[]): Totals {
       out.folds += 1
       out.lastFold = record.ts
     }
-    const plain = plainTokens(record)
+    const plain = scaled(record, record.charsIn)
     if (plain !== null) {
       out.sent += inputOf(record)
       out.saved += plain - inputOf(record)
@@ -58,4 +75,7 @@ export function totals(records: RequestRecord[]): Totals {
   return out
 }
 
-export const savedShare = (context: number, plain: number | null): number | null => (plain && plain > context ? 1 - context / plain : plain ? 0 : null)
+export function savedShare(context: number, plain: number | null): number | null {
+  if (!plain) return null
+  return plain > context ? 1 - context / plain : 0
+}

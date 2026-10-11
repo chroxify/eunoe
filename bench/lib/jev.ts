@@ -1,5 +1,22 @@
 import { readFileSync } from "node:fs"
-import { EVIDENCE_CATEGORIES, JEV_BLOCK, JEV_ENDPOINT, JEV_KEY_FILE, JEV_MAX_LINES } from "./constants"
+import { homedir } from "node:os"
+import path from "node:path"
+
+const JEV_KEY_FILE = path.join(homedir(), ".config", "eunoe-bench", "typesafe-key")
+
+const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+
+const JEV_BLOCK = 255
+
+const JEV_MAX_LINES = 1_000
+
+const EVIDENCE_CATEGORIES: Array<[string, string, string]> = [
+  ["error", "This output contains an error, failure, exception or warning line", "Which line is the main error, failure or warning message?"],
+  ["status", "This output contains a final status or result line, such as deployed to, N passed, N failed, exit code, done, created, published", "Which line states the final status or result of the command?"],
+  ["ident", "This output prints an identifier a developer may need to recall later: an id, hash, URL, version number, token, key, host or resource name", "Which line prints the most important identifier (id, hash, URL, version, name)?"],
+  ["measure", "This output prints a measurement, count or amount: a duration, size, row count, test count, price or percentage", "Which line prints the most important measurement, count or amount?"],
+  ["change", "This output names a file, path, migration, table, branch or resource that was created, changed, applied or deleted", "Which line names what was created, changed, applied or deleted?"],
+]
 
 export interface JevStats {
   calls: number

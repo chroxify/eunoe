@@ -4,9 +4,15 @@ import { foldedView, sourceChunks } from "../../src/context/fold"
 import { recallFor } from "../../src/context/recall"
 import { sessionMessages } from "../../src/transcript/messages"
 import { loadMetas } from "../planted/run"
-import { INJECT, LOADED, PAGE_CHARS, PEEK_CHARS } from "./constants"
+import { HANDOFF_OUT, INJECT } from "./paths"
 import { sessionFile } from "./prepare"
 import { rankSources } from "./run"
+
+const PAGE_CHARS = 25_000
+
+const PEEK_CHARS = 12_000
+
+const LOADED = path.join(HANDOFF_OUT, "loaded")
 
 const fail = (message: string): never => {
   console.error(message)

@@ -1,7 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import path from "node:path"
 import type { ArmSpec } from "../arms"
-import { TYPESAFE_KEY_FILE } from "./constants"
+
+const TYPESAFE_KEY_FILE = path.join(homedir(), ".eunoe", "typesafe-key")
 
 const rerankEnv = () => (process.env.TYPESAFE_API_KEY ? {} : existsSync(TYPESAFE_KEY_FILE) ? { TYPESAFE_API_KEY: readFileSync(TYPESAFE_KEY_FILE, "utf8").trim() } : {})
 

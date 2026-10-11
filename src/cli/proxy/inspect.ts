@@ -1,18 +1,36 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
 import path from "node:path"
-import { claudeConfigDirs } from "../../config"
-import { paths } from "../../config/constants"
-import type { Config } from "../../config/types"
-import { HEALTH_PATH } from "../../proxy/constants"
-import type { Health } from "../../proxy/types"
+import { type Config, claudeConfigDirs } from "../../config"
+import { paths } from "../../config/paths"
+import { HEALTH_PATH, type Health } from "../../proxy/server"
 import { parseJsonl } from "../../transcript/parse"
-import { pointsAtEunoe, proxyUrl } from "./claude-settings"
-import { PROBE_TIMEOUT_MS, RECENT_REQUESTS } from "./constants"
-import type { RequestRecord, Settings } from "./types"
+import { pointsAtEunoe, proxyUrl, readSettings } from "./claude-settings"
+
+export interface RequestRecord {
+  ts: string
+  action?: string
+  thread?: string | null
+  input?: number
+  charsIn?: number
+  charsOut?: number
+  charsFixed?: number
+  cacheRead?: number
+  cacheWrite?: number
+  uncached?: number
+  compacted?: boolean
+  turns?: number
+  reranked?: string
+  rerankError?: string
+  overflow?: number
+  fit?: string
+  [key: string]: unknown
+}
+
+export const RECENT_REQUESTS = 5_000
 
 export async function probe(port: number): Promise<Health | null> {
   try {
-    const response = await fetch(`${proxyUrl(port)}${HEALTH_PATH}`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+    const response = await fetch(`${proxyUrl(port)}${HEALTH_PATH}`, { signal: AbortSignal.timeout(800) })
     if (!response.ok) return null
     return (await response.json()) as Health
   } catch {
@@ -36,14 +54,6 @@ export function runsStaleCode(health: Health | null): boolean {
     return newestSource(path.join(import.meta.dir, "..")) > health.startedAt
   } catch {
     return false
-  }
-}
-
-export function readSettings(dir: string): Settings {
-  try {
-    return JSON.parse(readFileSync(path.join(dir, "settings.json"), "utf8"))
-  } catch {
-    return {}
   }
 }
 

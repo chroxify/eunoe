@@ -1,21 +1,30 @@
-import { VERSION } from "../../constants"
+import { VERSION } from "../../version"
+import type { Command, OptionRow } from "../command"
 import { withLogo } from "../logo"
-import type { Command } from "../types"
-import { COMMAND_GROUPS, GLOBAL_OPTIONS, TAGLINE } from "./constants"
 import { c, line } from "./ui"
+
+const GROUPS: Array<[title: string, names: string[]]> = [
+  ["Proxy", ["start", "stop", "status", "replay", "uninstall"]],
+  ["Context", ["mode", "settings"]],
+  ["Sessions", ["sessions"]],
+]
+
+const GLOBAL_OPTIONS: OptionRow[] = [
+  ["-h, --help", "Show help for a command"],
+  ["-v, --version", "Show the version"],
+]
 
 export function printHelp(commands: Record<string, Command>) {
   const width = Math.max(...Object.keys(commands).map((name) => name.length), ...GLOBAL_OPTIONS.map(([flag]) => flag.length))
   line()
-  for (const row of withLogo([`${c.bold("eunoe")} ${c.dim(VERSION)}`, c.italic(TAGLINE)])) line(row)
+  for (const row of withLogo([`${c.bold("eunoe")} ${c.dim(VERSION)}`, c.italic("Context management for Claude Code that never forgets what matters.")])) line(row)
   line()
   line(`  ${c.dim("Usage")}`)
   line(`    eunoe ${c.cyan("<command>")} ${c.dim("[options]")}`)
   line()
   const visible = Object.keys(commands).filter((name) => !commands[name].hidden)
-  const grouped = new Set(COMMAND_GROUPS.flatMap(([, names]) => names))
-  const groups = [...COMMAND_GROUPS, ["Other", visible.filter((name) => !grouped.has(name))] as [string, string[]]]
-  for (const [title, names] of groups) {
+  const grouped = new Set(GROUPS.flatMap(([, names]) => names))
+  for (const [title, names] of [...GROUPS, ["Other", visible.filter((name) => !grouped.has(name))] as const]) {
     const shown = names.filter((name) => visible.includes(name))
     if (shown.length === 0) continue
     line(`  ${c.dim(title)}`)

@@ -1,30 +1,40 @@
-import { readdirSync, statSync } from "node:fs"
+import { statSync } from "node:fs"
 import path from "node:path"
-import { textOf } from "../../context/content"
+import { type Message, textOf } from "../../context/content"
 import { isPrompt, splitTurns } from "../../context/fold/turns"
-import { rank, terms } from "../../context/recall"
-import type { RecallChunk } from "../../context/recall/types"
-import type { Message } from "../../context/types"
+import { type RecallChunk, rank, terms } from "../../context/recall"
 import { cwdOf, seenSessions, titleOf } from "../../proxy/sessions"
-import { findSessionFile } from "../../transcript/locate"
+import { findSessionFile, listEntries, projectFolderName } from "../../transcript/locate"
 import { sessionMessages } from "../../transcript/messages"
-import { INJECTED_TAGS, SESSION_MIN_TERMS, SESSION_OUTLINE_CHARS, SESSION_SOURCE_CANDIDATES, SESSION_SOURCE_MIN_TURNS } from "./constants"
-import type { SessionCandidate } from "./types"
 
-const promptText = (message: Message) => textOf(message).replace(INJECTED_TAGS, "").trim()
-
-export function outlineOf(messages: Message[]): string[] {
-  const { turns } = splitTurns(messages)
-  return turns
-    .filter((turn) => isPrompt(turn[0]))
-    .map((turn) => promptText(turn[0]))
-    .filter(Boolean)
-    .map((text) => text.slice(0, SESSION_OUTLINE_CHARS))
+export interface SessionCandidate {
+  id: string
+  file: string
+  label: string
+  mtime: number
+  asks: string[]
+  outline: string
+  messages: Message[]
 }
 
-const projectDirName = (cwd: string) => cwd.replace(/[^a-zA-Z0-9]/g, "-")
+export const SESSION_SOURCE_MIN_TURNS = 2
+export const SESSION_SOURCE_CANDIDATES = 12
+export const SESSION_MIN_TERMS = 2
 
-export function sessionCandidates(sessionId: string, cwd: string, configDirs: string[]): SessionCandidate[] {
+const promptText = (message: Message) =>
+  textOf(message)
+    .replace(/<[a-z-]+(?:\s[^>]*)?>[\s\S]*?<\/[a-z-]+>/g, "")
+    .trim()
+
+export function outlineOf(messages: Message[]): string[] {
+  return splitTurns(messages)
+    .turns.filter((turn) => isPrompt(turn[0]))
+    .map((turn) => promptText(turn[0]))
+    .filter(Boolean)
+    .map((text) => text.slice(0, 240))
+}
+
+function sessionFiles(sessionId: string, cwd: string, configDirs: string[]): Array<{ id: string; file: string; mtime: number }> {
   const files = new Map<string, { file: string; mtime: number }>()
   const add = (id: string, file: string) => {
     if (id === sessionId || files.has(id)) return
@@ -38,23 +48,21 @@ export function sessionCandidates(sessionId: string, cwd: string, configDirs: st
     if (file) add(id, file)
   }
   for (const dir of configDirs) {
-    const folder = path.join(dir, "projects", projectDirName(cwd))
-    let names: string[]
-    try {
-      names = readdirSync(folder)
-    } catch {
-      continue
-    }
-    for (const name of names) if (name.endsWith(".jsonl")) add(name.slice(0, -6), path.join(folder, name))
+    const folder = path.join(dir, "projects", projectFolderName(cwd))
+    for (const name of listEntries(folder)) if (name.endsWith(".jsonl")) add(name.slice(0, -".jsonl".length), path.join(folder, name))
   }
+  return [...files].map(([id, entry]) => ({ id, ...entry })).sort((a, b) => b.mtime - a.mtime)
+}
+
+export function sessionCandidates(sessionId: string, cwd: string, configDirs: string[]): SessionCandidate[] {
   const out: SessionCandidate[] = []
-  for (const [id, { file, mtime }] of [...files].sort(([, a], [, b]) => b.mtime - a.mtime)) {
+  for (const { id, file, mtime } of sessionFiles(sessionId, cwd, configDirs)) {
     const recorded = cwdOf(file)
     if (recorded && recorded !== cwd) continue
     const messages = sessionMessages(file)
     const asks = outlineOf(messages)
     if (asks.length < SESSION_SOURCE_MIN_TURNS) continue
-    out.push({ id, file, label: titleOf(file) ?? "", mtime, asks, outline: asks.map((line, i) => `${i + 1}. ${line}`).join("\n"), messages })
+    out.push({ id, file, label: titleOf(file) ?? "", mtime, asks, outline: asks.map((ask, i) => `${i + 1}. ${ask}`).join("\n"), messages })
     if (out.length >= SESSION_SOURCE_CANDIDATES) break
   }
   return out

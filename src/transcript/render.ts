@@ -1,36 +1,52 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { paths } from "../config/constants"
-import { INDEX_FILE, RENDER_STAMP, TURN_COUNT_FILE } from "./constants"
-import { renderIndex, renderMarkdown, renderSubagentMarkdown, renderSubagentXml, renderXml, subagentFile, turnFile } from "./format"
-import { parseJsonl, parseTurns } from "./parse"
-import { subagentEntries, subagentRuns } from "./subagents"
-import type { RenderResult, SubagentRecord, SubagentRun, TranscriptFormat } from "./types"
+import { paths } from "../config/paths"
+import { renderIndex, renderMarkdown, renderSubagentMarkdown, renderSubagentXml, renderXml, type SubagentRecord, subagentFile, turnFile } from "./format"
+import { parseJsonl, parseTurns, type ToolPart, type TranscriptFormat, type Turn } from "./parse"
+import { type SubagentRun, subagentEntries, subagentRuns } from "./subagents"
+
+interface RenderResult {
+  dir: string
+  changed: boolean
+  turns: number
+}
 
 export function transcriptDir(sessionId: string) {
   return path.join(paths.transcripts, sessionId)
 }
 
-export function renderTranscript(sessionFile: string, sessionId: string, outDir = transcriptDir(sessionId), format: TranscriptFormat = "markdown"): RenderResult {
-  mkdirSync(outDir, { recursive: true })
-  const stampFile = path.join(outDir, RENDER_STAMP)
-  const runs = subagentRuns(sessionFile)
-  const mtime = [statSync(sessionFile).mtimeMs, ...runs.map((run) => `${run.id}:${run.mtimeMs}`)].join("|")
-  if (existsSync(stampFile) && readFileSync(stampFile, "utf8") === mtime) {
-    return { dir: outDir, changed: false, turns: Number(readFileSync(path.join(outDir, TURN_COUNT_FILE), "utf8") || 0) }
+function launchingPart(turns: Turn[], run: SubagentRun): { turn: Turn; part: ToolPart } | null {
+  for (const turn of turns) {
+    for (const part of turn.parts) {
+      if (part.kind === "tool" && (run.toolUseId ? part.id === run.toolUseId : part.prompt === run.prompt)) return { turn, part }
+    }
   }
-  const turns = parseTurns(parseJsonl(readFileSync(sessionFile, "utf8")))
+  return null
+}
+
+function subagentRecords(turns: Turn[], runs: SubagentRun[], format: TranscriptFormat): SubagentRecord[] {
   const perTurn = new Map<number, number>()
-  const launcher = (run: SubagentRun) => turns.find((turn) => turn.parts.some((p) => p.kind === "tool" && (run.toolUseId ? p.id === run.toolUseId : p.prompt === run.prompt)))
-  const records: SubagentRecord[] = runs.map((run) => {
-    const parentTurn = launcher(run)?.number ?? 0
+  return runs.map((run) => {
+    const launcher = launchingPart(turns, run)
+    const parentTurn = launcher?.turn.number ?? 0
     const k = (perTurn.get(parentTurn) ?? 0) + 1
     perTurn.set(parentTurn, k)
     const file = subagentFile(parentTurn, k, format)
-    const part = launcher(run)?.parts.find((p) => p.kind === "tool" && (run.toolUseId ? p.id === run.toolUseId : p.prompt === run.prompt))
-    if (part && part.kind === "tool") part.record = file
+    if (launcher) launcher.part.record = file
     return { run, turns: parseTurns(subagentEntries(run), "any"), parentTurn, file }
   })
+}
+
+export function renderTranscript(sessionFile: string, sessionId: string, outDir = transcriptDir(sessionId), format: TranscriptFormat = "markdown"): RenderResult {
+  mkdirSync(outDir, { recursive: true })
+  const stampFile = path.join(outDir, ".rendered")
+  const countFile = path.join(outDir, ".turns")
+  const runs = subagentRuns(sessionFile)
+  const stamp = [statSync(sessionFile).mtimeMs, ...runs.map((run) => `${run.id}:${run.mtimeMs}`)].join("|")
+  if (existsSync(stampFile) && readFileSync(stampFile, "utf8") === stamp) return { dir: outDir, changed: false, turns: Number(readFileSync(countFile, "utf8") || 0) }
+
+  const turns = parseTurns(parseJsonl(readFileSync(sessionFile, "utf8")))
+  const records = subagentRecords(turns, runs, format)
   let changed = false
   const write = (file: string, content: string) => {
     const target = path.join(outDir, file)
@@ -40,8 +56,8 @@ export function renderTranscript(sessionFile: string, sessionId: string, outDir 
   }
   for (const turn of turns) write(turnFile(turn, format), format === "xml" ? renderXml(turn) : renderMarkdown(turn))
   for (const record of records) write(record.file, format === "xml" ? renderSubagentXml(record) : renderSubagentMarkdown(record))
-  write(INDEX_FILE, renderIndex(turns, format, records))
-  writeFileSync(stampFile, mtime)
-  writeFileSync(path.join(outDir, TURN_COUNT_FILE), String(turns.length))
+  write("index.md", renderIndex(turns, format, records))
+  writeFileSync(stampFile, stamp)
+  writeFileSync(countFile, String(turns.length))
   return { dir: outDir, changed, turns: turns.length }
 }

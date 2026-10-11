@@ -2,8 +2,7 @@ import { statSync } from "node:fs"
 import { basename } from "node:path"
 import { cwdOf, titleOf } from "../../proxy/sessions"
 import { sessionMessages } from "../../transcript/messages"
-import { replaySession } from "."
-import type { ReplayedSession, ReplayOptions } from "./types"
+import { type ReplayedSession, type ReplayOptions, replaySession } from "."
 
 declare var self: Worker
 

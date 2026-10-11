@@ -1,11 +1,36 @@
-import { clearedOutput } from "../context/constants"
-import { capTurns, clearToolResults, compactMessages, countToolResults } from "../context/fold/strategies"
+import type { Config } from "../config"
+import type { Body, Message } from "../context/content"
+import { type CompactOptions, capTurns, clearToolResults, compactMessages, countToolResults } from "../context/fold/strategies"
 import { splitTurns, turnFingerprint } from "../context/fold/turns"
-import type { Message } from "../context/types"
-import { DEFAULT_RATIO, PROTECTED_OUTPUTS } from "./constants"
-import { estimator, targetSize } from "./estimate"
-import { resetCut } from "./state"
-import type { CompactInput, CompactResult, ThreadState } from "./types"
+import { clearedOutput } from "../context/prompts"
+import { DEFAULT_RATIO, type Estimator, estimator, targetSize } from "./estimate"
+import { resetCut, type ThreadState } from "./state"
+
+export interface CompactInput {
+  body: Body
+  config: Config
+  state: ThreadState
+  window: number | null
+  guide: string | null
+  transcriptDir?: string | null
+  mayCompact: boolean
+  omittedBefore?: number
+  decorate?: (messages: Message[]) => Message[]
+  reduce?: CompactOptions["reduce"]
+}
+
+export interface CompactResult {
+  messages: Message[]
+  stateChanged: boolean
+  note: Record<string, unknown>
+}
+
+interface Rolling {
+  keep: number
+  budget: number
+}
+
+const PROTECTED_OUTPUTS = 5
 
 function settledCut(turns: Message[][], index: number) {
   let cut = index
@@ -13,7 +38,7 @@ function settledCut(turns: Message[][], index: number) {
   return cut
 }
 
-function resolveCut(turns: Message[][], state: ThreadState, config: CompactInput["config"], rollingKeep: number | undefined) {
+function resolveCut(turns: Message[][], state: ThreadState, config: Config, rollingKeep: number | undefined) {
   let cutIndex = state.cut ? turns.findIndex((turn) => turnFingerprint(turn) === state.cut) : -1
   let stateChanged = false
   if (state.cut && cutIndex === -1) {
@@ -40,7 +65,7 @@ function shrinkOnce(state: ThreadState, cutIndex: number, configuredKeep: number
   return `cleared=${state.cleared}`
 }
 
-function dueRoll(turns: Message[][], cutIndex: number, rolling: { keep: number; budget: number }, size: ReturnType<typeof estimator>): number | null {
+function dueRoll(turns: Message[][], cutIndex: number, rolling: Rolling, size: Estimator): number | null {
   const next = settledCut(turns, turns.length - 1 - rolling.keep)
   const backlog = size.of(turns.slice(Math.max(cutIndex, 0), Math.max(next, 0)).flat()) - size.fixed
   return next >= 1 && next > cutIndex && backlog > rolling.budget ? next : null
@@ -76,8 +101,8 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
     return state.cleared ? clearToolResults(messages, liveStart(messages), state.cleared, clearedOutput(transcriptDir ?? null)) : messages
   }
   const liveResults = () => {
-    const unclearedLive = compacted()
-    return countToolResults(unclearedLive, liveStart(unclearedLive))
+    const uncleared = compacted()
+    return countToolResults(uncleared, liveStart(uncleared))
   }
 
   const size = estimator(body, ratio)
@@ -87,7 +112,6 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
   let messages = build()
   let estimate = size.of(decorate(messages))
   const actions: string[] = []
-  const current = turns.length - 1
   const rebuild = () => {
     messages = build()
     estimate = size.of(decorate(messages))
@@ -107,6 +131,7 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
   }
 
   if (mayCompact && estimate > limit) {
+    const current = turns.length - 1
     if (current > 0 && current > cutIndex) moveCut(current, "cut")
     shrinkToTarget(
       () => estimate > target,
@@ -125,6 +150,7 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
       compacted: actions.includes("cut") || actions.includes("roll"),
       actions: actions.length > 0 ? actions : undefined,
       cutTurn: cutIndex > 0 ? cutIndex : null,
+      omitted: cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) - 1 : 0,
       keep: state.keep,
       cleared: state.cleared,
       turns: turns.length,

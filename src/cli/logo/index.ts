@@ -1,5 +1,5 @@
 import { trueColor, useColor } from "../terminal/ui"
-import { HALF_BLOCKS, LOGO_KEYS, LOGO_MISMATCH, LOGO_PALETTE, LOGO_PIXELS, OCTANT_TERMINALS, OCTANTS, TRANSPARENT_PIXEL } from "./constants"
+import { HALF_BLOCKS, KEYS, OCTANTS, PALETTE, PIXELS } from "./art"
 
 type Rgb = [number, number, number]
 type Pixel = Rgb | null
@@ -16,12 +16,12 @@ function sgr(color: Rgb, layer: "fg" | "bg") {
 }
 
 function pixel(key: string | undefined): Pixel {
-  if (!key || key === TRANSPARENT_PIXEL) return null
-  return rgb(LOGO_PALETTE[LOGO_KEYS.indexOf(key)])
+  if (!key || key === ".") return null
+  return rgb(PALETTE[KEYS.indexOf(key)])
 }
 
 function distance(a: Pixel, b: Pixel) {
-  if (!a || !b) return a === b ? 0 : LOGO_MISMATCH
+  if (!a || !b) return a === b ? 0 : 3 * 255 ** 2
   return (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2
 }
 
@@ -54,13 +54,12 @@ function cell(block: Pixel[], glyphs: string[]) {
 }
 
 function supportsOctants() {
-  const terminal = `${process.env.TERM_PROGRAM ?? ""} ${process.env.TERM ?? ""}`.toLowerCase()
-  return OCTANT_TERMINALS.some((name) => terminal.includes(name))
+  return `${process.env.TERM_PROGRAM ?? ""} ${process.env.TERM ?? ""}`.toLowerCase().includes("ghostty")
 }
 
 function region(x: number, y: number, width: number, height: number): Pixel[] {
   const block: Pixel[] = []
-  for (let dy = 0; dy < height; dy += 1) for (let dx = 0; dx < width; dx += 1) block.push(pixel(LOGO_PIXELS[y + dy]?.[x + dx]))
+  for (let dy = 0; dy < height; dy += 1) for (let dx = 0; dx < width; dx += 1) block.push(pixel(PIXELS[y + dy]?.[x + dx]))
   return block
 }
 
@@ -68,9 +67,9 @@ function logoLines(): string[] {
   if (!useColor) return []
   const octants = supportsOctants()
   const lines: string[] = []
-  for (let y = 0; y < LOGO_PIXELS.length; y += 4) {
+  for (let y = 0; y < PIXELS.length; y += 4) {
     let row = ""
-    for (let x = 0; x < LOGO_PIXELS[0].length; x += 2) {
+    for (let x = 0; x < PIXELS[0].length; x += 2) {
       row += octants ? cell(region(x, y, 2, 4), OCTANTS) : cell([dominant(region(x, y, 2, 2)), dominant(region(x, y + 2, 2, 2))], [...HALF_BLOCKS])
     }
     lines.push(row)

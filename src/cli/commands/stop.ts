@@ -1,9 +1,9 @@
 import { claudeConfigDirs, readConfig, saveConfig } from "../../config"
+import type { Command } from "../command"
 import { editSettings, withoutEunoe } from "../proxy/claude-settings"
 import { clearWatch } from "../proxy/watch"
 import { sessionArgs, shortId } from "../sessions"
 import { line, listFiles, note, ok } from "../terminal/ui"
-import type { Command } from "../types"
 
 export const stop: Command = {
   summary: "Send new sessions straight to the API again",

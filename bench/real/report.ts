@@ -1,6 +1,12 @@
 import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { REPORT_BUCKETS } from "./constants"
+
+const REPORT_BUCKETS: Array<[string, (n: number) => boolean]> = [
+  ["0-3", (n) => n <= 3],
+  ["4-10", (n) => n >= 4 && n <= 10],
+  ["11-25", (n) => n >= 11 && n <= 25],
+  ["26+", (n) => n >= 26],
+]
 
 const tag = process.argv[2]
 if (!tag) {

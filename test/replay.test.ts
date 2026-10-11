@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { replaySession } from "../src/cli/replay"
-import { REPLAY_NATIVE_COMPACT_AT } from "../src/cli/replay/constants"
-import type { Message } from "../src/context/types"
+import { REPLAY_NATIVE_COMPACT_AT, replaySession } from "../src/cli/replay"
+import type { Message } from "../src/context/content"
 import { compact } from "../src/proxy/compaction"
-import { DEFAULT_RATIO } from "../src/proxy/constants"
-import { sizeOf } from "../src/proxy/estimate"
-import type { ThreadState } from "../src/proxy/types"
+import { DEFAULT_RATIO, sizeOf } from "../src/proxy/estimate"
+import type { ThreadState } from "../src/proxy/state"
 import { call, config, reply, result, session, user } from "./fixtures"
 
 const fixedTokens = 2_000
@@ -50,6 +48,7 @@ describe("replay", () => {
     const out = replaySession(busy(60, 12, 8_000), { config: config(), window: 1_000_000, fixedTokens })
     expect(out.folds).toBeGreaterThan(0)
     expect(out.eunoeTokens).toBeLessThan(out.plainTokens)
+    expect(out.dropped).toBe(0)
     expect(out.eunoeCost).toBeLessThan(out.plainCost)
     expect(out.peakEunoe).toBeLessThan(out.peakPlain)
     expect(out.requests).toBe(1 + 60 * 13)
@@ -59,9 +58,15 @@ describe("replay", () => {
   test("with room to spare nothing folds and both sides match", () => {
     const out = replaySession(session(5, 100), { config: config(), window: 10_000_000, fixedTokens })
     expect(out.folds).toBe(0)
+    expect(out.dropped).toBe(0)
     expect(out.nativeCompactions).toBe(0)
     expect(out.eunoeTokens).toBe(out.plainTokens)
     expect(out.eunoeCost).toBe(out.plainCost)
+  })
+
+  test("folded turns that still do not fit are removed entirely, and that is counted as dropped", () => {
+    const out = replaySession(session(60, 30_000), { config: config(), window: 12_000, fixedTokens })
+    expect(out.dropped).toBeGreaterThan(0)
   })
 
   test("plain Claude Code compacts once it fills the window, and that is counted", () => {

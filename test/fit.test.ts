@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
+import type { Body, Message } from "../src/context/content"
 import { isPrompt, splitTurns, turnFingerprint } from "../src/context/fold/turns"
-import type { Body, Message } from "../src/context/types"
-import { DEFAULT_RATIO } from "../src/proxy/constants"
-import { sizeOf } from "../src/proxy/estimate"
-import { messageFingerprint, rewrite } from "../src/proxy/rewrite"
+import { DEFAULT_RATIO, sizeOf } from "../src/proxy/estimate"
+import { messageFingerprint } from "../src/proxy/fingerprint"
+import { rewrite } from "../src/proxy/rewrite"
 import { readState, saveState } from "../src/proxy/state"
 import { call, config, freshSession, reply, result, user } from "./fixtures"
 

@@ -1,11 +1,110 @@
 import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import path from "node:path"
-import { claude } from "../lib/claude"
-import { NO_TOOLS } from "../lib/constants"
+import { claude, NO_TOOLS } from "../lib/claude"
 import { extractJson } from "../lib/json"
-import { CHUNK, CHUNK_PROMPT, CLAUDE_VERSION, GENERATOR_MODEL, OUTLINE, PLANT_OUT, REPOS, SESSIONS, STYLES, TEXT } from "./constants"
 import { agoOf, type Fact, planFacts, rng, values } from "./facts"
+import { PLANT_OUT, SESSIONS } from "./paths"
+
+const GENERATOR_MODEL = "claude-opus-5-5"
+
+const CHUNK = 12
+
+const CLAUDE_VERSION = "2.1.287"
+
+const PROJECTS = path.join(homedir(), "Developer", "Projects")
+
+const SUPERWALL = path.join(homedir(), "Developer", "Superwall")
+
+const REPOS = [
+  path.join(PROJECTS, "kanna"),
+  path.join(PROJECTS, "buzzkit"),
+  path.join(PROJECTS, "cs"),
+  path.join(PROJECTS, "feedbase"),
+  path.join(PROJECTS, "marcato"),
+  path.join(PROJECTS, "outpost"),
+  path.join(PROJECTS, "tripline"),
+  path.join(PROJECTS, "madori"),
+  path.join(PROJECTS, "sen"),
+  path.join(PROJECTS, "shinsa"),
+  path.join(SUPERWALL, "pwn"),
+  path.join(SUPERWALL, "ios"),
+]
+
+const STYLES = ["terse and lowercase, few words, occasional typos, no greetings", "clear full sentences, polite, explains the why behind requests", "mixed: sometimes a one-liner, sometimes a paragraph of context; casual, a bit impatient"]
+
+const TEXT = /\.(ts|tsx|js|jsx|mjs|swift|py|go|rs|md|json|css|scss|html|yml|yaml|toml|sql|sh|kt)$/
+
+const OUTLINE = (
+  repo: Repo,
+  files: string[],
+  turns: number,
+  style: string,
+) => `You are planning a realistic, long working session between a developer and a coding agent (Claude Code) in the repository "${repo.name}". It runs ${turns} turns: each turn is one message from the developer and the agent's work on it.
+
+Make it feel like a real day of work on THIS codebase: a few threads of feature work, a debugging detour or two, refactors, test runs, small chores, a release or deploy, questions about how something works. Threads continue across many turns and some get interrupted and resumed later. Topics should reference real files and areas from the list below.
+
+The developer's style: ${style}.
+
+Return only JSON: {"title":"...","topics":["<turn 1 topic in one line>", ... exactly ${turns} items]}
+
+README (start):
+${repo.readme.slice(0, 3000)}
+
+Files (sample):
+${files.join("\n")}`
+
+const CHUNK_PROMPT = (o: {
+  repo: Repo
+  files: string[]
+  style: string
+  title: string
+  topics: string[]
+  from: number
+  to: number
+  turns: number
+  recent: Turn[]
+  rules: string[]
+  questions: Fact[]
+  forbidden: string[]
+  feedback?: string
+}) => `You are writing part of a realistic transcript of a long working session between a developer and a coding agent (Claude Code) in the repository "${o.repo.name}" (session: "${o.title}", ${o.turns} turns in total). Write turns ${o.from} to ${o.to}.
+
+For each turn write:
+- "user": the developer's message. Style: ${o.style}.
+- "steps": the agent's tool calls, 2-6 per turn, in order. Each is one of:
+    {"tool":"read","path":"<a file from the list>","offset":1,"limit":120}   executed for real, so use real paths
+    {"tool":"grep","pattern":"<regex>","path":"<dir or file>"}                  executed for real
+    {"tool":"ls","path":"<dir>"}                                               executed for real
+    {"tool":"git","args":"log --oneline -15 | show --stat HEAD~2 | diff --stat HEAD~3"} executed for real (log, show, diff, blame only)
+    {"tool":"edit","path":"<file>","old":"<a few lines>","new":"<a few lines>"}   a code change; keep old/new short
+    {"tool":"run","command":"<shell command>","output":"<its output>","failed":false}  anything else: tests, builds, scripts, deploys, curl, logs. YOU write the output: realistic and substantial (15-60 lines), matching this stack.
+  Any step may carry "say": one short sentence of narration the agent writes before it.
+  Prefer reading 1-3 real files per turn; reads are what make the session long.
+- "reply": the agent's final message for the turn, 2-6 sentences, specific about what it found or changed.
+
+Continuity: follow the topics, keep threads consistent, refer back naturally. The developer sometimes changes direction.
+
+Topics for these turns:
+${o.topics.map((t, i) => `${o.from + i}. ${t}`).join("\n")}
+
+${o.recent.length > 0 ? `The previous turns, for continuity:\n${o.recent.map((t) => `[${t.turn}] USER: ${t.user.slice(0, 300)}\nAGENT: ${t.reply.slice(0, 300)}`).join("\n")}\n` : ""}
+These exact requirements MUST hold (they are checked by code; a miss rejects the whole chunk). Each planted value lives only in its own turn: the work in other turns must not touch what would use it (if a rule is about how tests run, later turns don't run that test suite; if it's about branches, later turns don't create branches), so nothing ever repeats it.
+${o.rules.length > 0 ? o.rules.map((r) => `- ${r}`).join("\n") : "- (none in these turns)"}
+- These strings must not appear anywhere in these turns: ${o.forbidden.length > 0 ? o.forbidden.map((f) => `\`${f}\``).join(", ") : "(none)"}
+
+${
+  o.questions.length > 0
+    ? `For each of these facts, also write the question a teammate would ask much later to check the agent still knows it. Phrase it in the story's own terms (what was being done, which command, which thread) so it has exactly one answer, WITHOUT revealing the answer, the turn number, or any of the values above.${o.questions.some((f) => f.implicit) ? ` For the ones marked IMPLICIT, also write "task": a natural request that can only be done right by applying the rule, without mentioning the rule (e.g. "spin up the dev server for me, what exact command will you run?").` : ""}
+${o.questions.map((f) => `- ${f.id}${f.implicit ? " IMPLICIT" : ""}: ${f.label}${f.type === "revised" || f.type === "superseded" ? " (the current one)" : ""}`).join("\n")}
+`
+    : ""
+}${o.feedback ? `\nYour previous attempt was rejected for these reasons; fix them:\n${o.feedback}\n` : ""}
+Return only JSON: {"turns":[{"turn":${o.from},"user":"...","steps":[...],"reply":"..."}, ...]${o.questions.length > 0 ? `,"facts":[{"id":"f01","question":"..."${o.questions.some((f) => f.implicit) ? `,"task":"..."` : ""}}]` : ""}}
+
+Files you can read (sample of the repository):
+${o.files.join("\n")}`
 
 export interface Repo {
   root: string

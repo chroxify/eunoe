@@ -3,9 +3,10 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { claudeConfigDirs, normalizeConfig } from "../src/config"
+import { searchGuide } from "../src/context/prompts"
 import { findSessionFile } from "../src/transcript/locate"
 import { renderTranscript } from "../src/transcript/render"
-import { prepareTranscript, searchGuide } from "../src/transcript/search"
+import { prepareTranscript } from "../src/transcript/search"
 
 function writeSession(dir: string, id: string) {
   const project = path.join(dir, "projects", "-tmp-project")

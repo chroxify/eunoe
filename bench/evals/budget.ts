@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
+import type { Message } from "../../src/context/content"
 import { splitTurns } from "../../src/context/fold/turns"
-import type { Message } from "../../src/context/types"
-import { DEFAULT_RATIO } from "../../src/proxy/constants"
-import { sizeOf } from "../../src/proxy/estimate"
-import { BUDGETS, PLANTED_SESSIONS } from "./constants"
+import { DEFAULT_RATIO, sizeOf } from "../../src/proxy/estimate"
+import { SESSIONS } from "../planted/paths"
 
-const files = [...new Bun.Glob("s[0-9][0-9].jsonl").scanSync({ cwd: PLANTED_SESSIONS, absolute: true })].sort()
+const BUDGETS = [50_000, 100_000, 200_000, 300_000]
+
+const files = [...new Bun.Glob("s[0-9][0-9].jsonl").scanSync({ cwd: SESSIONS, absolute: true })].sort()
 const keep = Number(process.argv[2] ?? 3)
 
 function load(file: string): Message[] {

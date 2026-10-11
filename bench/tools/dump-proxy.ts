@@ -1,5 +1,5 @@
 import { appendFileSync } from "node:fs"
-import { UPSTREAM } from "../lib/constants"
+import { UPSTREAM } from "../lib/claude"
 
 const port = Number(process.argv[2] ?? 8898)
 const log = process.argv[3] ?? "/tmp/dump-proxy.jsonl"

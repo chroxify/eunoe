@@ -1,12 +1,27 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import type { Message } from "../../src/context/content"
 import { splitTurns } from "../../src/context/fold/turns"
 import { terms } from "../../src/context/recall"
-import type { Message } from "../../src/context/types"
 import { findSessionFile } from "../../src/transcript/locate"
 import { sessionMessages } from "../../src/transcript/messages"
-import { PLANTED_OUT, REAL_OUT } from "./constants"
+
+export const EVIDENCE_TYPE_KEYS = ["tool_value", "error", "prose_value", "superseded (current)", "superseded (stale)", "all"]
+
+export const DEPTH_KEYS = ["1–3", "4–10", "11–30", "31–60", "61+"]
+
+export const PLANTED_KEYS = ["tool_value", "error", "prose_value", "superseded", "all"]
+
+export const REAL_KEYS = ["tool_evidence", "recent", "mid_history", "decision", "instruction", "all"]
+
+const PLANTED_OUT = path.join(import.meta.dir, "..", "out", "planted")
+
+export const COMPONENTS = path.join(import.meta.dir, "..", "out", "evals")
+
+const REAL_OUT = path.join(import.meta.dir, "..", "out", "real")
+
+export const TOOL_FACTS = new Set(["tool_value", "error", "superseded", "prose_value"])
 
 export interface Plant {
   turn: number

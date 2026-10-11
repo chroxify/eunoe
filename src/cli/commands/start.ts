@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs"
 import path from "node:path"
-import { claudeConfigDirs, compactionOwner, readConfig, saveConfig } from "../../config"
-import type { Config } from "../../config/types"
+import { type Config, claudeConfigDirs, compactionOwner, readConfig, saveConfig } from "../../config"
+import type { Command } from "../command"
 import { editSettings, withEunoe } from "../proxy/claude-settings"
 import { routedDirs } from "../proxy/inspect"
 import { startService } from "../proxy/service"
@@ -9,8 +9,7 @@ import { clearWatch } from "../proxy/watch"
 import { isKnown, sessionArgs, shortId } from "../sessions"
 import { flagValues } from "../terminal/args"
 import { c, fail, line, listFiles, note, ok, rows, tilde } from "../terminal/ui"
-import type { Command } from "../types"
-import { MODE_DESCRIPTIONS } from "./constants"
+import { MODE_DESCRIPTIONS } from "./mode"
 
 function scoped(config: Config, ids: string[]): Partial<Config> {
   if (ids.length === 0) return { scope: "all" }
@@ -21,6 +20,14 @@ function scoped(config: Config, ids: string[]): Partial<Config> {
     sessions[id] = mode && mode !== "off" ? { mode, ...rest } : rest
   }
   return { scope: managingAll ? "all" : "sessions", sessions }
+}
+
+function managedSessions(config: Config): string {
+  if (config.scope === "all") return "all"
+  const ids = Object.entries(config.sessions)
+    .filter(([, own]) => own.mode !== "off")
+    .map(([id]) => shortId(id))
+  return `only ${ids.join(", ")}`
 }
 
 export const start: Command = {
@@ -55,15 +62,7 @@ export const start: Command = {
     line()
     rows([
       ["Mode", `${c.bold(config.mode)}  ${c.dim(MODE_DESCRIPTIONS[config.mode])}`],
-      [
-        "Sessions",
-        config.scope === "all"
-          ? "all"
-          : `only ${Object.entries(config.sessions)
-              .filter(([, own]) => own.mode !== "off")
-              .map(([id]) => shortId(id))
-              .join(", ")}`,
-      ],
+      ["Sessions", managedSessions(config)],
     ])
     line()
     const unseen = ids.filter((id) => !isKnown(id))

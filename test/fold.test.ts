@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import type { Message } from "../src/context/content"
 import { foldedTurns, foldedView, sourceChunks } from "../src/context/fold"
 import { recallFor } from "../src/context/recall"
-import type { Message } from "../src/context/types"
 import { reply, user } from "./fixtures"
 
 const run = (id: string, command: string, output: string): Message[] => [

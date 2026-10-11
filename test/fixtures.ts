@@ -1,6 +1,5 @@
-import { DEFAULTS } from "../src/config/constants"
-import type { Config } from "../src/config/types"
-import type { Message } from "../src/context/types"
+import { type Config, DEFAULTS } from "../src/config"
+import type { Message } from "../src/context/content"
 
 export const user = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] })
 export const system = (text: string): Message => ({ role: "system", content: text })

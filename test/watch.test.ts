@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { WATCH_MISSES } from "../src/cli/proxy/constants"
-import { nextWatch } from "../src/cli/proxy/watch"
+import { nextWatch, WATCH_MISSES } from "../src/cli/proxy/watch"
 
 const now = "2026-10-11T10:00:00.000Z"
 const dirs = ["/home/me/.claude"]

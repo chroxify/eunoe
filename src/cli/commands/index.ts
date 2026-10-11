@@ -1,4 +1,4 @@
-import type { Command } from "../types"
+import type { Command } from "../command"
 import { load } from "./load"
 import { mode } from "./mode"
 import { peek } from "./peek"

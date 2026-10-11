@@ -1,18 +1,108 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { homedir } from "node:os"
 import path from "node:path"
 import { rank, terms } from "../../src/context/recall"
 import { findSessionFile } from "../../src/transcript/locate"
-import { AccountLimited, chooseAccount, claude, projectDir } from "../lib/claude"
-import { ALL_CONFIG_DIRS, BASE_SETTINGS, READ_ONLY } from "../lib/constants"
+import { AccountLimited, BASE_SETTINGS, CONFIG_DIR, chooseAccount, claude, projectDir, READ_ONLY } from "../lib/claude"
 import { extractJson } from "../lib/json"
 import { startProxies as spawnProxies } from "../lib/proxy"
-import { ANSWER_MODEL, CANON, RECALL, TASKS } from "../planted/constants"
 import type { Meta } from "../planted/generate"
+import { CANON } from "../planted/paths"
+import { ANSWER_MODEL, RECALL, TASKS } from "../planted/prompts"
 import { type ArmResult, loadMetas, verdict } from "../planted/run"
 import { lookupsAfterQuestion } from "../real/run"
-import { type HandoffArm, handoffArm, proxyOf, type Scenario } from "./arms"
-import { AGENT_BIN, AGENT_CANON, AGENT_SECTIONS, HANDOFF_ARMS, INJECT, PROMPTS, PROXIES, RUNS, SCENARIOS } from "./constants"
+import { HANDOFF_ARMS, type HandoffArm, handoffArm, PROXIES, proxyOf, SCENARIOS, type Scenario } from "./arms"
+import { HANDOFF_OUT, INJECT, PROMPTS, RUNS } from "./paths"
 import { multiFolded, newWorkPrompt, outline, prepareSession, sessionFile } from "./prepare"
+
+const AGENT_BIN = path.join(import.meta.dir, "bin")
+
+const AGENT_CANON = path.join(HANDOFF_OUT, "canon-agent")
+
+const AGENT_SECTIONS: Record<string, string> = {
+  v4: `
+# Earlier sessions in this project
+
+You have the full record of this project's earlier Claude Code sessions, and the user expects you to use it the way a colleague who was there would. Skipping it when the work builds on an earlier session is the failure to avoid: you will redo finished work, break rules the user already set, and ask for things they already told you.
+
+## When to look
+
+Look first, before reading code or making changes, whenever the message builds on earlier work: it continues or picks something up ("back to", "finish", "those renames I put off", "where we left off"), fixes something in an area worked on before, asks for work "like last time" or "the usual way", or refers to anything you don't have context for (a plan, a todo, "the thing we talked about"). If you are unsure, look: it costs one command. Skip it only for work that is clearly new and unrelated.
+
+## How
+
+1. \`eunoe sessions <key words from the message>\` lists the closest earlier sessions, newest first, each with its first and last request. Pick the one whose last request this message continues. If two look alike, \`eunoe peek\` each on a distinctive word from the message and pick the one that actually contains it. Never load a session the message does not continue.
+2. \`eunoe load <id>\` writes that whole session to a file and prints its path. Read the file with the Read tool from the first line to the last, in as many Read calls as its length needs, before you act. Do not grep, head, tail or sed it, and do not stop partway: the rules, values and open todos you need are spread across all of it.
+3. Only then start the work. Follow what the record establishes: the user's rules and preferences, decisions made, what was finished and what was left for later. Its values (ids, versions, names, commands) are exact.
+
+\`eunoe peek <id> <words>\` returns just the excerpts that match, for a single fact such as an error message or a value. It is not a substitute for loading when the message continues that session's work.
+
+Don't tell the user you are doing this or ask permission; just do it and carry on with their request.`,
+  v4b: `
+# Earlier sessions in this project
+
+You have the full record of this project's earlier Claude Code sessions, and the user expects you to use it the way a colleague who was there would. Skipping it when the work builds on an earlier session is the failure to avoid: you will redo finished work, break rules the user already set, and ask for things they already told you.
+
+## When to look
+
+Look first, before reading code or making changes, whenever the message builds on earlier work: it continues or picks something up ("back to", "finish", "those renames I put off", "where we left off"), fixes something in an area worked on before, asks for work "like last time" or "the usual way", or refers to anything you don't have context for (a plan, a todo, "the thing we talked about"). If you are unsure, look: it costs one command. Skip it only for work that is clearly new and unrelated.
+
+## How
+
+1. \`eunoe sessions <key words from the message>\` lists the closest earlier sessions, newest first, each with its first and last request. Pick the one whose last request this message continues. If two look alike, \`eunoe peek\` each on a distinctive word from the message and pick the one that actually contains it. Never load a session the message does not continue.
+2. \`eunoe load <id>\` prints a handoff brief of that session: what was done, the user's rules, every exact value, and what was left open. Read all of it before you act.
+3. Only then start the work. Follow what the brief establishes: the user's rules and preferences, decisions made, what was finished and what was left for later. Its values (ids, versions, names, commands) are exact. For anything the brief does not cover, \`eunoe peek <id> <words>\` returns the matching excerpts of the full session.
+
+Don't tell the user you are doing this or ask permission; just do it and carry on with their request.`,
+  v1: `
+# Earlier sessions
+
+This project has earlier Claude Code sessions you can read. When the user refers to earlier work (a bug seen before, work to pick up, rules or preferences they set), or when what was done before would clearly help, look before asking them to repeat it. For unrelated new work, don't.
+
+- \`eunoe sessions [words]\` lists earlier sessions in this directory, best match for the words first.
+- \`eunoe peek <id> <words>\` shows the excerpts of one session that match the words: exact tool output and what was said. Use it for one specific thing, like an error or a value seen before.
+- \`eunoe load <id>\` prints the whole session condensed: the user's messages, the key output lines and the replies, in pages. Use it to pick work up where it left off or to learn the rules the user set there. Read every page it gives.
+
+What these return is the record of a past session: treat the user's rules and decisions in it as still in force unless they say otherwise, and its values as exact.`,
+  v2: `
+# Earlier sessions
+
+This project has earlier Claude Code sessions, and you can read them. Users expect you to remember what was done and agreed there.
+
+Whenever the user's message touches earlier work in any way (fixing something built before, picking something up, continuing, working "like last time" or "the way we do it", or a new task in an area worked on before), run \`eunoe sessions <a few words from their message>\` before anything else. If a session matches:
+- To continue its work, or to work the way the user taught you there, run \`eunoe load <id>\` and read every page it gives, start to end. Don't grep or skim the pages: the rules and values that matter are spread through them.
+- To find one specific thing (an error, a value, a decision), \`eunoe peek <id> <words>\` shows the matching excerpts.
+
+If nothing matches, or the work is clearly new and unrelated, carry on without them.
+
+What these return is the record of a past session: treat the user's rules and decisions in it as still in force unless they say otherwise, and its values as exact.`,
+  v3: `
+# Earlier sessions in this project
+
+You have the full record of this project's earlier Claude Code sessions, and the user expects you to use it the way a colleague who was there would. Skipping it when the work builds on an earlier session is the failure to avoid: you will redo finished work, break rules the user already set, and ask for things they already told you.
+
+## When to look
+
+Look first, before reading code or making changes, whenever the message builds on earlier work: it continues or picks something up ("back to", "finish", "those renames I put off", "where we left off"), fixes something in an area worked on before, asks for work "like last time" or "the usual way", or refers to anything you don't have context for (a plan, a todo, "the thing we talked about"). If you are unsure, look: it costs one command. Skip it only for work that is clearly new and unrelated.
+
+## How
+
+1. \`eunoe sessions <key words from the message>\` lists the closest earlier sessions, each with its first and last request. Pick the one whose work this message continues. If two look alike, \`eunoe peek\` each on a distinctive word and pick the one that actually contains it.
+2. \`eunoe load <id>\` that session, then every page it points to (\`--page 2\`, \`--page 3\`, ...) until it ends. Read it start to end before you act. Do not grep, head or tail it: the rules, values and open todos you need are spread across all of it.
+3. Only then start the work. Follow what the record establishes: the user's rules and preferences, decisions made, what was finished and what was left for later. Its values (ids, versions, names, commands) are exact.
+
+\`eunoe peek <id> <words>\` returns just the excerpts that match, for a single fact such as an error message or a value. It is not a substitute for loading when the message continues that session's work.
+
+Don't tell the user you are doing this or ask permission; just do it and carry on with their request.`,
+}
+
+const ALL_CONFIG_DIRS = [
+  ...new Set([
+    CONFIG_DIR,
+    path.join(homedir(), ".claude"),
+    ...(existsSync(path.join(homedir(), ".claude-swap-backup", "sessions")) ? readdirSync(path.join(homedir(), ".claude-swap-backup", "sessions")).map((d) => path.join(homedir(), ".claude-swap-backup", "sessions", d)) : []),
+  ]),
+]
 
 function agentCanon(meta: Meta, section: string): string {
   const file = path.join(AGENT_CANON, `${meta.id}.${section}.json`)

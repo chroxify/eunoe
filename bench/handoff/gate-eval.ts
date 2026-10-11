@@ -1,14 +1,18 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { SESSION_MIN_TERMS } from "../../src/cli/sessions/constants"
-import { rank, terms } from "../../src/context/recall"
-import type { RecallChunk } from "../../src/context/recall/types"
-import { claude } from "../lib/claude"
-import { NO_TOOLS } from "../lib/constants"
+import { SESSION_MIN_TERMS } from "../../src/cli/sessions/source"
+import { type RecallChunk, rank, terms } from "../../src/context/recall"
+import { claude, NO_TOOLS } from "../lib/claude"
 import { jev } from "../lib/jev"
 import { extractJson } from "../lib/json"
-import { GATE_CACHE, HANDOFF_OUT, JUDGE_Q, JUNK } from "./constants"
+import { HANDOFF_OUT } from "./paths"
 import { half, type Label, type RealCase, type RealSession, realCases } from "./real-cases"
+
+const GATE_CACHE = path.join(HANDOFF_OUT, "gate-cache.json")
+
+const JUNK = /^\s*(\[Request interrupted|⟩|\[kn\]|Type help|test\s*$)|^\s*\d+\s*\t/
+
+const JUDGE_Q = "Is the new session continuing the same specific work (same feature, bug or investigation) as one of these earlier sessions? Same repo or same general area is not enough. Answer none unless it clearly continues one."
 
 const JUDGES = (process.argv.find((a) => a.startsWith("--judges="))?.slice(9) ?? "jev,haiku").split(",").filter(Boolean)
 const labels: Record<string, Label> = JSON.parse(readFileSync(path.join(HANDOFF_OUT, "labels.json"), "utf8"))

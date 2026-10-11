@@ -1,6 +1,24 @@
 import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { BOOTSTRAP, NON_INFERIORITY, OUT, QUESTION_TYPES, VALIDATE_ARMS, VALIDATE_BUCKETS, VALIDATE_CONT_ARMS } from "./constants"
+import { OUT } from "./paths"
+
+const VALIDATE_ARMS = ["native", "native+guide", "tail", "eunoe", "rolling", "trim", "full"] as const
+
+const VALIDATE_CONT_ARMS = VALIDATE_ARMS.filter((a) => a !== "full")
+
+const QUESTION_TYPES = ["tool_evidence", "mid_history", "instruction", "decision", "continuation", "recent"]
+
+const VALIDATE_BUCKETS: Array<[string, (n: number) => boolean]> = [
+  ["live", (n) => n === 0],
+  ["1-3", (n) => n >= 1 && n <= 3],
+  ["4-10", (n) => n >= 4 && n <= 10],
+  ["11-25", (n) => n >= 11 && n <= 25],
+  ["26+", (n) => n >= 26],
+]
+
+const NON_INFERIORITY = -10
+
+const BOOTSTRAP = 20_000
 
 interface Question {
   id: number

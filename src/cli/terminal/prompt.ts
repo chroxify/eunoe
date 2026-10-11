@@ -1,12 +1,28 @@
-import { CURSOR_HIDE, CURSOR_SHOW, KEY_BACKSPACE, KEY_DOWN, KEY_ENTER, KEY_ESCAPE, KEY_SEQUENCE, KEY_UP, VIM_DOWN, VIM_QUIT, VIM_UP } from "./constants"
-import type { Choice } from "./types"
 import { c, useColor } from "./ui"
+
+const ESC = "\x1b"
+const KEY_SEQUENCE = new RegExp(`${ESC}\\[[0-9;]*[A-Za-z~]|${ESC}.|[\\s\\S]`, "g")
+
+interface Choice<T extends string = string> {
+  value: T
+  label?: string
+  hint?: string
+}
+
+export const keys = {
+  up: "\x1b[A",
+  down: "\x1b[B",
+  enter: ["\r", "\n"],
+  escape: ["\x1b", "\x03"],
+  backspace: ["\x7f", "\b"],
+  clear: "\x15",
+}
 
 export const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY)
 
 export const printable = (key: string) => key >= " " && !key.startsWith("\x1b")
 
-function keys(onKey: (key: string) => boolean | undefined): Promise<void> {
+function readKeys(onKey: (key: string) => boolean | undefined): Promise<void> {
   return new Promise((resolve) => {
     const stdin = process.stdin
     stdin.setRawMode(true)
@@ -34,14 +50,15 @@ export async function interact(render: () => string[], onKey: (key: string) => b
     process.stdout.write(`${lines.join("\n")}\n`)
     drawn = lines.length
   }
-  if (hideCursor && useColor) process.stdout.write(CURSOR_HIDE)
+  const toggleCursor = hideCursor && useColor
+  if (toggleCursor) process.stdout.write("\x1b[?25l")
   draw()
-  await keys((key) => {
+  await readKeys((key) => {
     if (onKey(key) === true) return true
     draw()
   })
   process.stdout.write(`\x1b[${drawn}A\x1b[J`)
-  if (hideCursor && useColor) process.stdout.write(CURSOR_SHOW)
+  if (toggleCursor) process.stdout.write("\x1b[?25h")
 }
 
 function renderChoices(title: string, choices: Choice[], index: number, width: number) {
@@ -65,12 +82,12 @@ export async function select<T extends string>(title: string, choices: Choice<T>
   await interact(
     () => renderChoices(title, choices, index, width),
     (key) => {
-      if (key === KEY_UP || key === VIM_UP) index = (index + choices.length - 1) % choices.length
-      else if (key === KEY_DOWN || key === VIM_DOWN) index = (index + 1) % choices.length
-      else if (KEY_ENTER.includes(key)) {
+      if (key === keys.up || key === "k") index = (index + choices.length - 1) % choices.length
+      else if (key === keys.down || key === "j") index = (index + 1) % choices.length
+      else if (keys.enter.includes(key)) {
         chosen = choices[index].value
         return true
-      } else if (KEY_ESCAPE.includes(key) || key === VIM_QUIT) return true
+      } else if (keys.escape.includes(key) || key === "q") return true
     },
   )
   return chosen
@@ -83,12 +100,12 @@ export async function input(title: string, placeholder: string, initial = ""): P
   await interact(
     render,
     (key) => {
-      if (KEY_ENTER.includes(key)) {
+      if (keys.enter.includes(key)) {
         result = value
         return true
       }
-      if (KEY_ESCAPE.includes(key)) return true
-      if (KEY_BACKSPACE.includes(key)) value = value.slice(0, -1)
+      if (keys.escape.includes(key)) return true
+      if (keys.backspace.includes(key)) value = value.slice(0, -1)
       else if (printable(key)) value += key
     },
     false,

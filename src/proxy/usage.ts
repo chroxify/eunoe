@@ -1,5 +1,4 @@
-import { MAX_EVENT_BUFFER } from "./constants"
-import type { Usage } from "./types"
+type Usage = Record<string, number>
 
 function usageIn(line: string): Usage | null {
   if (!line.startsWith("data:") || !line.includes("message_start")) return null
@@ -23,14 +22,12 @@ function trailingUsage(buffer: string): Usage | null {
 
 function scanEvents(buffer: string): { usage: Usage | null; rest: string } {
   let rest = buffer
-  while (true) {
-    const newline = rest.indexOf("\n")
-    if (newline === -1) return { usage: null, rest }
-    const line = rest.slice(0, newline).trim()
+  for (let newline = rest.indexOf("\n"); newline !== -1; newline = rest.indexOf("\n")) {
+    const usage = usageIn(rest.slice(0, newline).trim())
     rest = rest.slice(newline + 1)
-    const usage = usageIn(line)
     if (usage) return { usage, rest }
   }
+  return { usage: null, rest }
 }
 
 async function readUsage(stream: ReadableStream): Promise<Usage | null> {
@@ -43,7 +40,7 @@ async function readUsage(stream: ReadableStream): Promise<Usage | null> {
     if (usage) continue
     const scanned = scanEvents(buffer + value)
     usage = scanned.usage
-    buffer = scanned.rest.length > MAX_EVENT_BUFFER ? "" : scanned.rest
+    buffer = scanned.rest.length > 4_000_000 ? "" : scanned.rest
   }
 }
 

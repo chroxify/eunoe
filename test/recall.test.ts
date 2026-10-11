@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import type { Message } from "../src/context/content"
 import { salientLines, turnEvidence } from "../src/context/fold/evidence"
 import { trimMessages } from "../src/context/fold/strategies"
 import { recallChunks, recallFor, withRecall } from "../src/context/recall"
-import type { Message } from "../src/context/types"
 import { rewrite } from "../src/proxy/rewrite"
 import { config, freshSession, reply, user } from "./fixtures"
 

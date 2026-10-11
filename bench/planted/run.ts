@@ -1,15 +1,25 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import type { ArmSpec } from "../arms"
-import { ARMS } from "../constants"
-import { chooseAccount, claude, projectDir } from "../lib/claude"
-import { BASE_SETTINGS, READ_ONLY } from "../lib/constants"
+import { ARMS } from "../arms"
+import { BASE_SETTINGS, chooseAccount, claude, projectDir, READ_ONLY } from "../lib/claude"
 import { extractJson } from "../lib/json"
 import { parse } from "../lib/points"
 import { startProxies as spawnProxies } from "../lib/proxy"
 import { lookupsAfterQuestion } from "../real/run"
-import { ANSWER_MODEL, CANON, CUT_SHARE, NATIVE, RECALL, RUNS, SESSIONS, SUPERSEDED_AFTER, SUPERSEDED_BEFORE, TASKS, TRANSCRIPTS } from "./constants"
 import type { Meta } from "./generate"
+import { CANON, PLANT_OUT, RUNS, SESSIONS } from "./paths"
+import { ANSWER_MODEL, RECALL, TASKS } from "./prompts"
+
+const NATIVE = path.join(PLANT_OUT, "native")
+
+const TRANSCRIPTS = path.join(PLANT_OUT, "transcripts")
+
+const CUT_SHARE = 0.95
+
+const SUPERSEDED_BEFORE = /(?:old|older|previous|former|earlier|replac\w*|instead of|rather than|no longer|not|n.t|over|from|was|were|used to|superseded|dropped|rejected|ruled out|than)\W*(?:\w+\W+){0,4}$/
+
+const SUPERSEDED_AFTER = /^\W*(?:\w+\W+){0,3}?(?:is|was|has been|got)?\W*(?:no longer|replaced|superseded|retired|dropped|rejected|out|old|obsolete|deprecated)\b/
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 

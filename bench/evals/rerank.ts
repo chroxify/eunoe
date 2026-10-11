@@ -1,11 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
-import { rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
-import type { RecallChunk, RecallPick } from "../../src/context/recall/types"
-import { COMPONENTS, TOOL_FACTS } from "../lib/constants"
-import { keyTokens, mentions, plantedSessions, realPoints, Tally } from "../lib/data"
-import { NARRATIVE_OPTS, RERANK_CACHE_FILE, RERANK_CANDIDATES, RERANK_MODEL, RERANK_PICK } from "./constants"
+import { type RecallChunk, type RecallPick, rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
+import { COMPONENTS, keyTokens, mentions, plantedSessions, realPoints, Tally, TOOL_FACTS } from "../lib/data"
+
+const RERANK_MODEL = process.env.RERANK_MODEL ?? "claude-haiku-4-5-20251001"
+
+const RERANK_CANDIDATES = Number(process.env.RERANK_CANDIDATES ?? 30)
+
+const RERANK_PICK = Number(process.env.RERANK_PICK ?? 4)
+
+const RERANK_CACHE_FILE = path.join(COMPONENTS, `rerank-cache.${RERANK_MODEL}.json`)
+
+const NARRATIVE_OPTS = { narrative: true }
 
 const API_KEY = readFileSync(path.join(homedir(), ".config", "eunoe-bench", "api-key"), "utf8").trim()
 const split = process.argv[2] ?? "dev"

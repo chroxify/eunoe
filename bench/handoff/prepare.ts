@@ -1,18 +1,35 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { blocks, describeToolCall, resultText } from "../../src/context/content"
-import { foldedView } from "../../src/context/fold"
-import { FOLD_CAP_CHARS } from "../../src/context/fold/constants"
+import { FOLD_CAP_CHARS, foldedView } from "../../src/context/fold"
 import { isPrompt, splitTurns } from "../../src/context/fold/turns"
 import { sessionMessages } from "../../src/transcript/messages"
-import { claude } from "../lib/claude"
-import { NO_TOOLS } from "../lib/constants"
+import { claude, NO_TOOLS } from "../lib/claude"
 import { extractJson } from "../lib/json"
-import { SESSIONS } from "../planted/constants"
 import type { Meta } from "../planted/generate"
+import { SESSIONS } from "../planted/paths"
 import { loadMetas } from "../planted/run"
 import type { Scenario } from "./arms"
-import { BRIEF, BRIEF_MODELS, HANDOFF_OUT, INJECT, PROMPTS, RULES, RULES_MODEL, SCENARIOS } from "./constants"
+import { SCENARIOS } from "./arms"
+import { HANDOFF_OUT, INJECT, PROMPTS } from "./paths"
+
+const RULES_MODEL = "claude-opus-5-5"
+
+const BRIEF_MODELS: Record<string, string> = { haiku: "claude-haiku-4-5-20251001", sonnet: "claude-sonnet-5-5", opus: "claude-opus-5-5" }
+
+const RULES = (
+  folded: string,
+) => `Below is an earlier coding session between a developer and their agent, with tool output already reduced. Extract every standing instruction, rule, preference or constraint the developer gave that would still bind in a later session on this project: how to name things, what to use or avoid, who reviews, where to deploy, what never to touch, how replies should read. Quote each one in the developer's own words. When a rule was later revised, give only the current version and note what it replaced in parentheses.
+
+Return only JSON: {"rules":["...", ...]}
+
+${folded}`
+
+const BRIEF = (
+  folded: string,
+) => `Below is an earlier coding session between a developer and their agent, with tool output already reduced. Write a handoff brief for a new agent that has to continue this work cold, days later. Cover, with headings: what was built and where it lives; rules and preferences the developer gave (current versions, in their words); decisions and the options rejected; exact values worth keeping (IDs, hashes, URLs, flags, prefixes, numbers, error codes, copied exactly); what was left open or promised. Be concrete and dense. Under 900 words.
+
+${folded}`
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 const norm = (t: string) => t.toLowerCase().replace(/[`'"]/g, "")

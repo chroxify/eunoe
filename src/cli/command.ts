@@ -1,4 +1,4 @@
-import type { OptionRow } from "./terminal/types"
+export type OptionRow = [flag: string, description: string]
 
 export interface Command {
   summary: string

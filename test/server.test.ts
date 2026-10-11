@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
-import { paths } from "../src/config/constants"
+import { paths } from "../src/config/paths"
 import { handle } from "../src/proxy/server"
 import { freshSession, session } from "./fixtures"
 

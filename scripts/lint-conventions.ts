@@ -25,8 +25,7 @@ const VERB_CHECK_ROOTS = ["src"]
 const BANNED_VERB_PATTERN = /^(get|fetch|load|set|delete|destroy)[A-Z]/
 const BANNED_VERB_ALLOWLIST = new Set<string>()
 const ALLOWED_COMMENT_PATTERN = /^\s*(biome-ignore|@ts-|#region|#endregion)/
-const CONSTANT_PATTERN = /^[A-Z][A-Z0-9_]+$/
-const CONSTANTS_FILE = /(^|\/)constants\.ts$/
+const GRAB_BAG_FILE = /(^|\/)(constants|types)\.ts$/
 
 function listSourceFiles(root: string): string[] {
   const files: string[] = []
@@ -83,20 +82,9 @@ function collectVerbViolations(file: string, program: BabelNode, violations: Vio
   })
 }
 
-function collectConstantViolations(file: string, program: BabelNode, violations: Violation[]) {
-  if (CONSTANTS_FILE.test(file) || !file.startsWith("src/")) return
-  const body = program.body as BabelNode[]
-  for (const statement of body) {
-    const declaration = (statement.type === "ExportNamedDeclaration" ? statement.declaration : statement) as BabelNode | null
-    if (declaration?.type !== "VariableDeclaration") continue
-    for (const declarator of declaration.declarations as BabelNode[]) {
-      const id = declarator.id as BabelNode & { name?: string }
-      const init = declarator.init as BabelNode | null
-      if (!id?.name || !CONSTANT_PATTERN.test(id.name)) continue
-      if (init?.type === "ArrowFunctionExpression" || init?.type === "FunctionExpression") continue
-      violations.push({ file, line: declarator.loc?.start.line ?? 0, message: `Module-level value "${id.name}" belongs in this directory's constants.ts` })
-    }
-  }
+function collectGrabBagViolations(file: string, violations: Violation[]) {
+  if (!GRAB_BAG_FILE.test(file)) return
+  violations.push({ file, line: 1, message: "No constants.ts or types.ts: a value or type lives in the file that uses it, or in the module that owns it" })
 }
 
 function run() {
@@ -112,7 +100,7 @@ function run() {
       }
       collectCommentViolations(file, parsed.comments ?? [], violations)
       if (VERB_CHECK_ROOTS.some((verbRoot) => file.startsWith(verbRoot))) collectVerbViolations(file, parsed.program, violations)
-      collectConstantViolations(file, parsed.program, violations)
+      collectGrabBagViolations(file, violations)
     }
   }
   if (violations.length === 0) return

@@ -1,27 +1,36 @@
-import { textOf } from "../content"
-import { recallChunks, terms } from "../recall"
-import type { RecallChunk } from "../recall/types"
-import type { Message } from "../types"
-import { FOLD_REMINDERS } from "./constants"
+import { type Message, textOf } from "../content"
+import { type RecallChunk, recallChunks, terms } from "../recall"
 import { isPrompt, reduceTurn, splitTurns } from "./turns"
-import type { FoldedTurn } from "./types"
 
-const spoken = (message: Message) => textOf(message).replace(FOLD_REMINDERS, "").trim()
+export interface FoldedTurn {
+  user: string
+  evidence: string
+  reply: string
+}
+
+export const FOLD_CAP_CHARS = 400_000
+
+const spoken = (message: Message) =>
+  textOf(message)
+    .replace(/<(system-reminder|system-message|recalled-context|handoff)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g, "")
+    .trim()
+
+const isEvidence = (text: string) => text.startsWith("<tool-evidence>")
 
 export function foldedTurns(messages: Message[]): FoldedTurn[] {
-  const { turns } = splitTurns(messages)
-  return turns
-    .filter((turn) => isPrompt(turn[0]))
+  return splitTurns(messages)
+    .turns.filter((turn) => isPrompt(turn[0]))
     .map((turn) => {
       const reduced = reduceTurn(turn, { evidence: true })
       const users = reduced.filter((m) => m.role === "user").map(spoken)
-      const evidence = users.filter((t) => t.startsWith("<tool-evidence>")).join("\n")
-      const user = users.filter((t) => t && !t.startsWith("<tool-evidence>")).join("\n\n")
-      const reply = reduced
-        .filter((m) => m.role === "assistant")
-        .map(spoken)
-        .join("\n")
-      return { user, evidence, reply }
+      return {
+        user: users.filter((t) => t && !isEvidence(t)).join("\n\n"),
+        evidence: users.filter(isEvidence).join("\n"),
+        reply: reduced
+          .filter((m) => m.role === "assistant")
+          .map(spoken)
+          .join("\n"),
+      }
     })
 }
 
@@ -48,9 +57,8 @@ export function foldedView(messages: Message[], cap = Number.POSITIVE_INFINITY):
 export function sourceChunks(messages: Message[], from: string, users = false): RecallChunk[] {
   const chunks = recallChunks([...messages, { role: "user", content: "" }], new Map()).map((chunk) => ({ ...chunk, from }))
   if (!users) return chunks
-  const { turns } = splitTurns(messages)
-  const said = turns
-    .filter((turn) => isPrompt(turn[0]))
+  const said = splitTurns(messages)
+    .turns.filter((turn) => isPrompt(turn[0]))
     .map((turn, i) => ({ turn: i + 1, text: spoken(turn[0]) }))
     .filter((t) => t.text)
   return [...said.map((t) => ({ turn: t.turn, from, call: "you", lines: t.text.split("\n"), terms: terms(t.text) })), ...chunks]

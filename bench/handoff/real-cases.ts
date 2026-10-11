@@ -1,7 +1,6 @@
 import { readdirSync, readFileSync } from "node:fs"
 import path from "node:path"
-import { SESSION_SOURCE_CANDIDATES, SESSION_SOURCE_MIN_TURNS } from "../../src/cli/sessions/constants"
-import { outlineOf } from "../../src/cli/sessions/source"
+import { outlineOf, SESSION_SOURCE_CANDIDATES, SESSION_SOURCE_MIN_TURNS } from "../../src/cli/sessions/source"
 import { sessionMessages } from "../../src/transcript/messages"
 import { sessionRoots } from "../lib/points"
 

@@ -1,32 +1,43 @@
 import { clip } from "../context/content"
-import { INDEX_PROMPT_CHARS, INDEX_REPLY_CHARS } from "./constants"
-import type { SubagentRecord, TranscriptFormat, Turn } from "./types"
+import type { ToolPart, TranscriptFormat, Turn } from "./parse"
+import type { SubagentRun } from "./subagents"
+
+export interface SubagentRecord {
+  run: SubagentRun
+  turns: Turn[]
+  parentTurn: number
+  file: string
+}
+
+const extension = (format: TranscriptFormat) => (format === "xml" ? "xml" : "md")
+const padded = (n: number) => String(n).padStart(4, "0")
+const calls = (count: number) => `${count} tool call${count === 1 ? "" : "s"}`
 
 export function turnFile(turn: Turn, format: TranscriptFormat) {
-  return `turn-${String(turn.number).padStart(4, "0")}.${format === "xml" ? "xml" : "md"}`
+  return `turn-${padded(turn.number)}.${extension(format)}`
 }
 
 export function subagentFile(parentTurn: number, k: number, format: TranscriptFormat) {
-  return `turn-${String(parentTurn).padStart(4, "0")}-subagent-${k}.${format === "xml" ? "xml" : "md"}`
+  return `turn-${padded(parentTurn)}-subagent-${k}.${extension(format)}`
+}
+
+function toolMarkdown(part: ToolPart, total: number) {
+  return [
+    `### [tool ${part.n}/${total}] ${part.name}: ${part.call}`,
+    part.record ? `Full record of this subagent run: ${part.record}` : "",
+    part.body,
+    part.output ? `[output of tool ${part.n}${part.error ? ", error" : ""}]\n\`\`\`\n${part.output}\n\`\`\`` : `[tool ${part.n}: no output]`,
+  ]
+    .filter(Boolean)
+    .join("\n\n")
 }
 
 function workOf(turn: Turn) {
-  return turn.parts.map((part) =>
-    part.kind === "say"
-      ? `> ${part.text.replace(/\n/g, "\n> ")}`
-      : [
-          `### [tool ${part.n}/${turn.calls}] ${part.name}: ${part.call}`,
-          part.record ? `Full record of this subagent run: ${part.record}` : "",
-          part.body,
-          part.output ? `[output of tool ${part.n}${part.error ? ", error" : ""}]\n\`\`\`\n${part.output}\n\`\`\`` : `[tool ${part.n}: no output]`,
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
-  )
+  const work = turn.parts.map((part) => (part.kind === "say" ? `> ${part.text.replace(/\n/g, "\n> ")}` : toolMarkdown(part, turn.calls)))
+  return work.join("\n\n") || "_No tool calls._"
 }
 
 export function renderMarkdown(turn: Turn) {
-  const work = workOf(turn)
   return [
     `# Turn ${turn.number}${turn.time ? ` · ${turn.time}` : ""}`,
     "",
@@ -34,9 +45,9 @@ export function renderMarkdown(turn: Turn) {
     "",
     turn.prompt,
     "",
-    `## Work (${turn.calls} tool call${turn.calls === 1 ? "" : "s"})`,
+    `## Work (${calls(turn.calls)})`,
     "",
-    work.join("\n\n") || "_No tool calls._",
+    workOf(turn),
     "",
     "## Final reply",
     "",
@@ -49,71 +60,70 @@ function attr(value: string) {
   return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/\n/g, " ")
 }
 
+function toolXml(part: ToolPart, total: number) {
+  return [
+    `<tool n="${part.n}" of="${total}" name="${attr(part.name)}">`,
+    `<call>${part.call.replace(/^`|`$/g, "")}</call>`,
+    part.record ? `<record>${part.record}</record>` : "",
+    part.body ? `<input>\n${part.body}\n</input>` : "",
+    part.output ? `<output${part.error ? ' error="true"' : ""}>\n${part.output}\n</output>` : "<output/>",
+    "</tool>",
+  ]
+    .filter(Boolean)
+    .join("\n")
+}
+
 export function renderXml(turn: Turn) {
-  const work = turn.parts.map((part) =>
-    part.kind === "say"
-      ? `<said>\n${part.text}\n</said>`
-      : [
-          `<tool n="${part.n}" of="${turn.calls}" name="${attr(part.name)}">`,
-          `<call>${part.call.replace(/^`|`$/g, "")}</call>`,
-          part.record ? `<record>${part.record}</record>` : "",
-          part.body ? `<input>\n${part.body}\n</input>` : "",
-          part.output ? `<output${part.error ? ' error="true"' : ""}>\n${part.output}\n</output>` : "<output/>",
-          "</tool>",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-  )
   return [
     `<turn n="${turn.number}"${turn.time ? ` time="${turn.time}"` : ""} tool_calls="${turn.calls}">`,
     `<user>\n${turn.prompt}\n</user>`,
-    ...work,
+    ...turn.parts.map((part) => (part.kind === "say" ? `<said>\n${part.text}\n</said>` : toolXml(part, turn.calls))),
     turn.final ? `<final_reply>\n${turn.final}\n</final_reply>` : `<final_reply interrupted="true"/>`,
     "</turn>",
     "",
   ].join("\n")
 }
 
-const turnLine = (turn: Turn, format: TranscriptFormat) =>
-  `- **${turnFile(turn, format)}** (${turn.time}, ${turn.calls} calls): ${clip(turn.prompt, INDEX_PROMPT_CHARS)} → ${turn.final ? clip(turn.final, INDEX_REPLY_CHARS) : "_(no final reply)_"}`
+const finalOf = (final: string | undefined) => (final ? clip(final, 160) : "_(no final reply)_")
+
+const turnLine = (turn: Turn, format: TranscriptFormat) => `- **${turnFile(turn, format)}** (${turn.time}, ${turn.calls} calls): ${clip(turn.prompt, 140)} → ${finalOf(turn.final)}`
 
 const recordLine = (record: SubagentRecord) => {
-  const calls = record.turns.reduce((sum, turn) => sum + turn.calls, 0)
-  const final = record.turns.at(-1)?.final
-  return `  - **${record.file}**: subagent "${clip(record.run.description, INDEX_PROMPT_CHARS)}" (${calls} calls) → ${final ? clip(final, INDEX_REPLY_CHARS) : "_(no final reply)_"}`
+  const total = record.turns.reduce((sum, turn) => sum + turn.calls, 0)
+  return `  - **${record.file}**: subagent "${clip(record.run.description, 140)}" (${total} calls) → ${finalOf(record.turns.at(-1)?.final)}`
 }
 
 export function renderIndex(turns: Turn[], format: TranscriptFormat, records: SubagentRecord[] = []) {
-  const ext = format === "xml" ? "xml" : "md"
-  const orphans = records.filter((record) => record.parentTurn === 0)
+  const ext = extension(format)
+  const subagentNote = records.length > 0 ? ` Indented lines are subagents the agent launched in that turn; turn-NNNN-subagent-K.${ext} holds the subagent's whole run, which the turn itself only has the report of.` : ""
   return [
     "# Session index",
     "",
-    `One line per turn: what the user asked → how the turn ended. Open turn-NNNN.${ext} for everything that happened in it.${records.length > 0 ? ` Indented lines are subagents the agent launched in that turn; turn-NNNN-subagent-K.${ext} holds the subagent's whole run, which the turn itself only has the report of.` : ""}`,
+    `One line per turn: what the user asked → how the turn ended. Open turn-NNNN.${ext} for everything that happened in it.${subagentNote}`,
     "",
     ...turns.flatMap((turn) => [turnLine(turn, format), ...records.filter((record) => record.parentTurn === turn.number).map(recordLine)]),
-    ...orphans.map(recordLine),
+    ...records.filter((record) => record.parentTurn === 0).map(recordLine),
     "",
   ].join("\n")
 }
 
 export function renderSubagentMarkdown(record: SubagentRecord) {
-  const head = `# Subagent of turn ${record.parentTurn || "?"} · "${record.run.description}"`
+  const parent = record.parentTurn || "?"
   const body = record.turns.flatMap((turn, i) => [
     record.turns.length > 1 ? `## Message ${i + 1}` : "## Task",
     "",
     turn.prompt,
     "",
-    `## Work (${turn.calls} tool call${turn.calls === 1 ? "" : "s"})`,
+    `## Work (${calls(turn.calls)})`,
     "",
-    workOf(turn).join("\n\n") || "_No tool calls._",
+    workOf(turn),
     "",
     "## Final reply",
     "",
     turn.final || "_No final reply: the run was interrupted or is still going._",
     "",
   ])
-  return [head, `This is the full record of a subagent launched from turn ${record.parentTurn || "?"}; that turn only holds its final report.`, "", ...body].join("\n")
+  return [`# Subagent of turn ${parent} · "${record.run.description}"`, `This is the full record of a subagent launched from turn ${parent}; that turn only holds its final report.`, "", ...body].join("\n")
 }
 
 export function renderSubagentXml(record: SubagentRecord) {
