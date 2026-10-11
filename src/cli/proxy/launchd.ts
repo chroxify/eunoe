@@ -1,43 +1,45 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { LAUNCHD_LABEL, LAUNCH_AGENT_PLIST as PLIST } from "./constants"
+import { RESTART_THROTTLE_S } from "./constants"
+import type { Agent } from "./types"
 
 export const supported = process.platform === "darwin"
 
-export function isInstalled() {
-  return existsSync(PLIST)
+export function isInstalled(agent: Agent) {
+  return existsSync(agent.plist)
 }
 
-export function installAgent(program: string[], logFile: string) {
-  mkdirSync(path.dirname(PLIST), { recursive: true })
+export function installAgent(agent: Agent, program: string[], logFile: string) {
+  mkdirSync(path.dirname(agent.plist), { recursive: true })
   const args = program.map((arg) => `<string>${arg}</string>`).join("")
+  const schedule = agent.interval ? `<key>StartInterval</key><integer>${agent.interval}</integer>` : `<key>KeepAlive</key><true/>\n  <key>ThrottleInterval</key><integer>${RESTART_THROTTLE_S}</integer>`
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key><string>${LAUNCHD_LABEL}</string>
+  <key>Label</key><string>${agent.label}</string>
   <key>ProgramArguments</key><array>${args}</array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  ${schedule}
   <key>StandardOutPath</key><string>${logFile}</string>
   <key>StandardErrorPath</key><string>${logFile}</string>
 </dict></plist>
 `
-  if (existsSync(PLIST) && readFileSync(PLIST, "utf8") === plist) {
-    Bun.spawnSync(["launchctl", "load", PLIST])
+  if (existsSync(agent.plist) && readFileSync(agent.plist, "utf8") === plist) {
+    Bun.spawnSync(["launchctl", "load", agent.plist])
     return
   }
-  writeFileSync(PLIST, plist)
-  Bun.spawnSync(["launchctl", "unload", PLIST])
-  Bun.spawnSync(["launchctl", "load", PLIST])
+  writeFileSync(agent.plist, plist)
+  Bun.spawnSync(["launchctl", "unload", agent.plist])
+  Bun.spawnSync(["launchctl", "load", agent.plist])
 }
 
-export function restartAgent() {
-  Bun.spawnSync(["launchctl", "kickstart", "-k", `gui/${process.getuid?.() ?? ""}/${LAUNCHD_LABEL}`])
+export function restartAgent(agent: Agent) {
+  Bun.spawnSync(["launchctl", "kickstart", "-k", `gui/${process.getuid?.() ?? ""}/${agent.label}`])
 }
 
-export function removeAgent() {
-  if (!existsSync(PLIST)) return false
-  Bun.spawnSync(["launchctl", "unload", PLIST])
-  unlinkSync(PLIST)
+export function removeAgent(agent: Agent) {
+  if (!existsSync(agent.plist)) return false
+  Bun.spawnSync(["launchctl", "unload", agent.plist])
+  unlinkSync(agent.plist)
   return true
 }

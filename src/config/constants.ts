@@ -14,6 +14,7 @@ export const paths = {
   proxyLog: path.join(EUNOE_DIR, "proxy.log"),
   typesafeKey: path.join(EUNOE_DIR, "typesafe-key"),
   loaded: path.join(EUNOE_DIR, "loaded"),
+  watch: path.join(EUNOE_DIR, "watch.json"),
 }
 
 export const RERANK_OFF = "off"
@@ -22,7 +23,7 @@ export const DEFAULTS: Config = {
   mode: "default",
   scope: "all",
   sessions: {},
-  port: 8788,
+  port: 38663,
   compactAt: 0.9,
   keepTurns: "all",
   keep: 3,

@@ -203,3 +203,19 @@ describe("canonical context", () => {
     }
   })
 })
+
+describe("upstream outage", () => {
+  test("an unreachable API becomes a 502 error Claude Code can retry, not a crash", async () => {
+    const saved = readFileSync(paths.config, "utf8")
+    await Bun.sleep(5)
+    writeFileSync(paths.config, JSON.stringify({ upstream: "http://127.0.0.1:1", mode: "compact" }))
+    try {
+      const response = await handle(new Request("http://127.0.0.1/v1/other"))
+      expect(response.status).toBe(502)
+      expect((await response.json()).error.type).toBe("api_error")
+    } finally {
+      await Bun.sleep(5)
+      writeFileSync(paths.config, saved)
+    }
+  })
+})

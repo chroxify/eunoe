@@ -5,11 +5,12 @@ import { VERSION } from "../../constants"
 import { rerankKey } from "../../context/recall/rerank"
 import { seenSessions } from "../../proxy/sessions"
 import { proxyUrl } from "../proxy/claude-settings"
-import { BLOCKING_LIMIT_ENV, RECENT_REQUESTS } from "../proxy/constants"
+import { BLOCKING_LIMIT_ENV, PROXY_AGENT, RECENT_REQUESTS } from "../proxy/constants"
 import { probe, readSettings, recentRequests, routedDirs, runsStaleCode } from "../proxy/inspect"
 import * as launchd from "../proxy/launchd"
 import { perSession, savedShare, totals, withinWindow } from "../proxy/stats"
 import type { Totals } from "../proxy/types"
+import { readWatch } from "../proxy/watch"
 import { shortId } from "../sessions"
 import { ago, c, line, percent, rows, table, tilde, tokens, warn } from "../terminal/ui"
 import type { Command } from "../types"
@@ -68,6 +69,9 @@ function sessionsTable(config: ReturnType<typeof readConfig>, stats: ReturnType<
 
 function warnings(config: ReturnType<typeof readConfig>, health: Awaited<ReturnType<typeof probe>>, routed: string[], recent: ReturnType<typeof recentRequests>) {
   const notes: string[] = []
+  const watch = readWatch()
+  if (watch.paused.length > 0)
+    notes.push(`The proxy stopped answering ${watch.pausedAt ? ago(watch.pausedAt) : ""}, so Claude Code was sent straight to the API. Routing comes back by itself once the proxy does; ${c.bold("eunoe start")} forces it.`)
   if (health && health.mode !== config.mode) notes.push(`The running proxy reports mode ${health.mode}; it switches on its next request.`)
   if (health && runsStaleCode(health)) notes.push(`The proxy is running older code than what's installed. ${c.bold("eunoe start")} restarts it.`)
   const unguarded = config.mode !== "off" ? routed.filter((dir) => readSettings(dir).env?.[BLOCKING_LIMIT_ENV] === undefined) : []
@@ -99,7 +103,7 @@ export const status: Command = {
 
     const recall = recallLine(config, recent)
     rows([
-      ["Proxy", health ? `${dot(true)} running on ${c.cyan(proxyUrl(config.port))}${launchd.isInstalled() ? c.dim("  launchd") : ""}` : `${dot(false)} not running ${c.dim("(eunoe start)")}`],
+      ["Proxy", health ? `${dot(true)} running on ${c.cyan(proxyUrl(config.port))}${launchd.isInstalled(PROXY_AGENT) ? c.dim("  launchd") : ""}` : `${dot(false)} not running ${c.dim("(eunoe start)")}`],
       ["Claude Code", routed.length > 0 ? `${dot(true)} routed ${c.dim(routed.map((dir) => tilde(path.join(dir, "settings.json"))).join(", "))}` : `${c.dim("○")} not routed ${c.dim("(eunoe start)")}`],
       ["Mode", `${c.bold(config.mode)}  ${c.dim(MODE_DESCRIPTIONS[config.mode])}`],
       ["Sessions", config.scope === "all" ? "all" : `only the ones you started it for ${c.dim("(eunoe start --session <id>)")}`],

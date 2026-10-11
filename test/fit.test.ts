@@ -44,7 +44,7 @@ describe("what is sent always fits", () => {
     const sessionId = freshSession()
     const messages: Message[] = [user("first"), reply("ok")]
     for (let n = 1; n <= 20; n += 1) messages.push(user(`task ${n}`), call(`a${n}`), result(`a${n}`, 6_000), reply(`answer ${n}`))
-    const live = user("{continue:prior-xx-aaaaaaaa} pick it up")
+    const live = user("{ee:continue:prior-xx-aaaaaaaa} pick it up")
     messages.push(live, call("z"), result("z", 400))
     saveState(threadOf(sessionId, messages), { handoffs: { [messageFingerprint(live)]: { label: "Earlier", source: "/nowhere.jsonl", text: "h".repeat(250_000) } } })
     const out = rewrite({ body: body(messages), sessionId, config: config({ mode: "default" }), transcript: null, window: WINDOW, mayCompact: true })

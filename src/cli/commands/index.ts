@@ -10,6 +10,7 @@ import { start } from "./start"
 import { status } from "./status"
 import { stop } from "./stop"
 import { uninstall } from "./uninstall"
+import { watch } from "./watch"
 
 const alias = (target: Command, prefix: string[] = []): Command => ({ ...target, hidden: true, run: (args) => target.run([...prefix, ...args]) })
 
@@ -25,6 +26,7 @@ export const commands: Record<string, Command> = {
   load,
   uninstall,
   serve,
+  watch,
   enable: alias(start),
   disable: alias(stop),
   set: alias(settings, ["set"]),

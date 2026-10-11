@@ -4,6 +4,19 @@ export interface Settings {
   [key: string]: unknown
 }
 
+export interface Agent {
+  label: string
+  plist: string
+  keepAlive?: boolean
+  interval?: number
+}
+
+export interface Watch {
+  misses: number
+  paused: string[]
+  pausedAt?: string
+}
+
 export interface RequestRecord {
   ts: string
   action?: string

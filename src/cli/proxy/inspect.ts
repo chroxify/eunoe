@@ -6,7 +6,7 @@ import type { Config } from "../../config/types"
 import { HEALTH_PATH } from "../../proxy/constants"
 import type { Health } from "../../proxy/types"
 import { parseJsonl } from "../../transcript/parse"
-import { proxyUrl } from "./claude-settings"
+import { pointsAtEunoe, proxyUrl } from "./claude-settings"
 import { PROBE_TIMEOUT_MS, RECENT_REQUESTS } from "./constants"
 import type { RequestRecord, Settings } from "./types"
 
@@ -48,7 +48,7 @@ export function readSettings(dir: string): Settings {
 }
 
 export function routedDirs(config: Config) {
-  return claudeConfigDirs(config).filter((dir) => readSettings(dir).env?.ANTHROPIC_BASE_URL === proxyUrl(config.port))
+  return claudeConfigDirs(config).filter((dir) => pointsAtEunoe(readSettings(dir), config.port))
 }
 
 export function recentRequests(limit = RECENT_REQUESTS): RequestRecord[] {

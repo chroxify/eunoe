@@ -9,7 +9,6 @@ export const SESSION_OUTLINE_CHARS = 240
 export const SESSION_MIN_TERMS = 2
 
 export const INJECTED_TAGS = /<[a-z-]+(?:\s[^>]*)?>[\s\S]*?<\/[a-z-]+>/g
-
 export const PEEK_STRIP = /^<recalled-context>\n[^\n]*\n\n|\n<\/recalled-context>$/g
 export const PEEK_CHARS = 12_000
 export const PEEK_PER_QUERY = 6

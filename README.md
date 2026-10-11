@@ -104,8 +104,10 @@ sessions that were already running pick it up when you restart them.
 `eunoe stop` turns it off again.
 
 Requires [Bun](https://bun.sh). On macOS `start` sets up a launchd agent that
-keeps the proxy alive; on other platforms keep `eunoe serve` running however
-you like and everything else works the same.
+keeps the proxy alive and a watchdog that unroutes Claude Code if the proxy
+should ever be down; on other platforms keep `eunoe serve` running however you like and
+everything else works the same. The proxy listens on 127.0.0.1:38663 (`port`
+in `~/.eunoe/config.json` changes it).
 
 ## How it works
 
@@ -247,7 +249,7 @@ it, so it never disturbs the cache.
 
 ```
 Claude Code  ------>  eunoe  ------>  api.anthropic.com
-CLI, desktop app,     127.0.0.1:8788
+CLI, desktop app,     127.0.0.1:38663
 Agent SDK             rewrites /v1/messages
                       passes everything else through
 ```
@@ -344,7 +346,7 @@ eunoe uninstall              # stop and remove the background proxy
 
 A different big problem with Claude is that new chats always start cold. eunoe
 helps you carry an earlier session into one: run `eunoe sessions`, pick the
-session (type to filter), and paste the copied `{continue:<id>}` marker into
+session (type to filter), and paste the copied `{ee:continue:<id>}` marker into
 the chat along with what you want done. eunoe attaches that whole session to
 the message, folded the same way it folds turns in a live session: your
 messages, the key output lines and the agent's replies, in order. From then on
@@ -356,7 +358,7 @@ one on its own; in the benchmark that choice was wrong a third of the time,
 while a named session remembered 98% of its facts and kept 95% of its rules.
 
 ```sh
-eunoe sessions [words]       # browse earlier sessions here; enter copies {continue:<id>}
+eunoe sessions [words]       # browse earlier sessions here; enter copies {ee:continue:<id>}
 ```
 
 The agent is also taught two commands for digging on its own: `eunoe load
@@ -418,8 +420,14 @@ to it and how much of it the API served from cache, which is also where
 
 - **It is a proxy, which makes it a single point of failure.** If it isn't
   running while `ANTHROPIC_BASE_URL` still points at it, every Claude request
-  fails. launchd keeps it alive, and `stop` leaves it running so sessions
-  already pointed at it keep working.
+  fails. Three things limit the damage: `start` refuses to route Claude Code
+  until the proxy answers, launchd restarts the proxy within a second whenever
+  it dies, and a watchdog that runs every 10 seconds takes eunoe out of
+  `settings.json` after 20 seconds of silence and puts it back when the proxy
+  answers again. A request the proxy can't deliver upstream comes back as a
+  502 that Claude Code retries, never a hang. Sessions that were already
+  running keep the old address until restarted, so they wait for the proxy
+  rather than falling back.
 - **It only understands Claude Code's shape of conversation.** Other
   Anthropic API clients pass through unchanged and get nothing out of it.
 - **It can't recover what Claude Code already compacted,** so turn it on

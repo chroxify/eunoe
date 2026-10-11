@@ -98,6 +98,6 @@ describe("load", () => {
   })
 
   test("the prompt eunoe sessions copies names the session to load", () => {
-    expect(continuePrompt("prior-seo-bbbbbbbb")).toBe("{continue:prior-se}")
+    expect(continuePrompt("prior-seo-bbbbbbbb")).toBe("{ee:continue:prior-se}")
   })
 })

@@ -5,6 +5,8 @@ import type { Settings } from "./types"
 
 export const proxyUrl = (port: number) => `http://127.0.0.1:${port}`
 
+export const pointsAtEunoe = (settings: Settings, port: number) => settings.env?.ANTHROPIC_BASE_URL === proxyUrl(port)
+
 export function withEunoe(settings: Settings, port: number, mode: string): Settings {
   const next = { ...settings, env: { ...settings.env, ANTHROPIC_BASE_URL: proxyUrl(port) } }
   return withCompactionOwner(next, mode)
@@ -12,7 +14,7 @@ export function withEunoe(settings: Settings, port: number, mode: string): Setti
 
 export function withoutEunoe(settings: Settings, port: number): Settings {
   const next = { ...settings }
-  if (next.env?.ANTHROPIC_BASE_URL === proxyUrl(port)) {
+  if (next.env && pointsAtEunoe(next, port)) {
     const { ANTHROPIC_BASE_URL: _, ...env } = next.env
     if (Object.keys(env).length > 0) next.env = env
     else delete next.env

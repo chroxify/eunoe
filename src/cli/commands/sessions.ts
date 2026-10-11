@@ -47,7 +47,7 @@ export const sessions: Command = {
   usage: "eunoe sessions [words] [--list]",
   details: [
     "Browse this directory's earlier Claude Code sessions: type to filter, pick",
-    "one, and a {continue:<id>} marker is copied. Paste it into any Claude Code",
+    "one, and a {ee:continue:<id>} marker is copied. Paste it into any Claude Code",
     "chat along with what you want done: eunoe attaches that whole session to the",
     "message, and its dropped output stays searchable from then on. Words start",
     "the filter.",

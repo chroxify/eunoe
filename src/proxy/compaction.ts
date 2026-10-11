@@ -1,4 +1,4 @@
-import { CLEARED_OUTPUT } from "../context/constants"
+import { clearedOutput } from "../context/constants"
 import { capTurns, clearToolResults, compactMessages, countToolResults } from "../context/fold/strategies"
 import { splitTurns, turnFingerprint } from "../context/fold/turns"
 import type { Message } from "../context/types"
@@ -55,7 +55,7 @@ function shrinkToTarget(over: () => boolean, step: () => string, actions: string
   }
 }
 
-export function compact({ body, config, state, window, guide, mayCompact, omittedBefore = 0, decorate = (m) => m, reduce }: CompactInput): CompactResult {
+export function compact({ body, config, state, window, guide, transcriptDir, mayCompact, omittedBefore = 0, decorate = (m) => m, reduce }: CompactInput): CompactResult {
   const { turns } = splitTurns(body.messages)
   const rolling = config.eval?.rolling ?? (config.mode === "default" ? { keep: config.keep, budget: config.budget } : undefined)
   const resolved = resolveCut(turns, state, config, rolling?.keep)
@@ -73,7 +73,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
   const compacted = () => capTurns(cutIndex > 0 ? compactMessages(body.messages, cutIndex, { ...options, keepTurns: state.keep ?? configuredKeep }) : body.messages, { ...options, keepTurns: 0 })
   const build = () => {
     const messages = compacted()
-    return state.cleared ? clearToolResults(messages, liveStart(messages), state.cleared, CLEARED_OUTPUT) : messages
+    return state.cleared ? clearToolResults(messages, liveStart(messages), state.cleared, clearedOutput(transcriptDir ?? null)) : messages
   }
   const liveResults = () => {
     const unclearedLive = compacted()

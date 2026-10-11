@@ -75,6 +75,7 @@ export interface CompactInput {
   state: ThreadState
   window: number | null
   guide: string | null
+  transcriptDir?: string | null
   mayCompact: boolean
   omittedBefore?: number
   decorate?: (messages: Message[]) => Message[]

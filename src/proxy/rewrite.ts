@@ -205,7 +205,17 @@ function strategize(input: RewriteInput): Rewrite {
   if (body.messages.length < 2) return { body: based, threadKey, note: { action: "full", turns: turns.length } }
   const recalls = wantsRecall(input) ? activeRecalls(state.recalls) : {}
   const decorate = (messages: Message[]) => withRecall(withHandoffs(messages, messageFingerprint, handoffs), messageFingerprint, recalls)
-  const result = compact({ body: based, config, state, window: input.window, guide, mayCompact: input.mayCompact, omittedBefore: input.omittedBefore, decorate })
+  const result = compact({
+    body: based,
+    config,
+    state,
+    window: input.window,
+    guide,
+    transcriptDir: transcript && transcript.mode !== "jsonl" ? transcript.dir : null,
+    mayCompact: input.mayCompact,
+    omittedBefore: input.omittedBefore,
+    decorate,
+  })
   if (result.stateChanged) saveState(threadKey, state)
   return {
     body: result.messages === body.messages ? based : { ...based, messages: result.messages },

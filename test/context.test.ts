@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { CLEARED_OUTPUT } from "../src/context/constants"
+import { clearedOutput } from "../src/context/constants"
 import { appendSystem, clearToolResults, compactMessages, countToolResults, tailMessages, trimMessages } from "../src/context/fold/strategies"
 import { isPrompt, reduceTurn, splitTurns, turnFingerprint } from "../src/context/fold/turns"
 import type { Message } from "../src/context/types"
@@ -145,8 +145,8 @@ describe("clearing tool output", () => {
   test("clears the oldest outputs, keeps every call, and shortens huge inputs", () => {
     const messages = [user("go"), call("a", { content: "y".repeat(5_000) }), result("a", 100), call("b"), result("b", 100)]
     expect(countToolResults(messages, 0)).toBe(2)
-    const out = clearToolResults(messages, 0, 1, CLEARED_OUTPUT)
-    expect(text(out)).toContain(CLEARED_OUTPUT)
+    const out = clearToolResults(messages, 0, 1, clearedOutput("/t"))
+    expect(text(out)).toContain("full transcript at /t")
     expect(text(out)).toContain("step a")
     expect(text(out)).toContain("chars cleared")
     expect(out[4]).toEqual(result("b", 100))

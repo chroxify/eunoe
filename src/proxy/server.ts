@@ -7,7 +7,7 @@ import type { Body } from "../context/types"
 import { findSessionFile } from "../transcript/locate"
 import { prepareTranscript } from "../transcript/search"
 import { applyCanonical } from "./canonical"
-import { CANONICAL_HEADER, HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, OVERFLOW_MARGIN, PROMPT_TOO_LONG, SESSION_HEADER, TRANSCRIPT_HEADER, WINDOW_HEADER } from "./constants"
+import { CANONICAL_HEADER, HEALTH_PATH, IDLE_TIMEOUT_SECONDS, LOGGED_ERROR_CHARS, OMITTED_BEFORE_HEADER, OVERFLOW_MARGIN, PROMPT_TOO_LONG, SESSION_HEADER, TRANSCRIPT_HEADER, UPSTREAM_ERROR_STATUS, WINDOW_HEADER } from "./constants"
 import { sizeOf } from "./estimate"
 import { contextFingerprint } from "./fingerprint"
 import { logRequest } from "./log"
@@ -67,6 +67,15 @@ async function prepare(request: Request, body: Body, base: Config, isCountTokens
 }
 
 export async function handle(request: Request): Promise<Response> {
+  try {
+    return await route(request)
+  } catch (error) {
+    logRequest({ path: new URL(request.url).pathname, status: UPSTREAM_ERROR_STATUS, action: "upstream-unreachable", error: String(error).slice(0, LOGGED_ERROR_CHARS) })
+    return Response.json({ type: "error", error: { type: "api_error", message: `eunoe could not reach the API: ${String(error)}` } }, { status: UPSTREAM_ERROR_STATUS })
+  }
+}
+
+async function route(request: Request): Promise<Response> {
   const config = readConfig()
   const url = new URL(request.url)
   if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid, startedAt: startedAt } satisfies Health)

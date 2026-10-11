@@ -1,6 +1,7 @@
 import { claudeConfigDirs, readConfig } from "../../config"
 import { editSettings, withoutEunoe } from "../proxy/claude-settings"
-import * as launchd from "../proxy/launchd"
+import { removeService } from "../proxy/service"
+import { clearWatch } from "../proxy/watch"
 import { c, line, listFiles, note, ok, warn } from "../terminal/ui"
 import type { Command } from "../types"
 
@@ -11,10 +12,11 @@ export const uninstall: Command = {
   run() {
     const config = readConfig()
     const touched = editSettings(claudeConfigDirs(config), (settings) => withoutEunoe(settings, config.port))
+    clearWatch()
     line()
     ok("Claude Code no longer routed through eunoe")
     listFiles(touched)
-    if (launchd.removeAgent()) ok("Background proxy stopped and removed")
+    if (removeService()) ok("Background proxy stopped and removed")
     else note("No background proxy was installed.")
     warn(`Restart any Claude Code session that was still using eunoe.`)
     line(`  ${c.dim("Data kept in")} ~/.eunoe`)

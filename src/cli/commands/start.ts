@@ -5,6 +5,7 @@ import type { Config } from "../../config/types"
 import { editSettings, withEunoe } from "../proxy/claude-settings"
 import { routedDirs } from "../proxy/inspect"
 import { startService } from "../proxy/service"
+import { clearWatch } from "../proxy/watch"
 import { isKnown, sessionArgs, shortId } from "../sessions"
 import { flagValues } from "../terminal/args"
 import { c, fail, line, listFiles, note, ok, rows, tilde } from "../terminal/ui"
@@ -46,7 +47,8 @@ export const start: Command = {
     const config = readConfig()
 
     line()
-    await startService(config)
+    if (!(await startService(config))) fail("Claude Code was left alone because the proxy isn't up.", "Nothing is routed through a proxy that can't answer. Fix the proxy and run `eunoe start` again.")
+    clearWatch()
     const touched = editSettings(claudeConfigDirs(config), (settings) => withEunoe(settings, config.port, compactionOwner(config)))
     ok("Claude Code routed through eunoe")
     listFiles(touched.length > 0 ? touched : routedDirs(config).map((dir) => path.join(dir, "settings.json")))

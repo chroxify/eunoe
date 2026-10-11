@@ -1,5 +1,6 @@
 import { claudeConfigDirs, readConfig, saveConfig } from "../../config"
 import { editSettings, withoutEunoe } from "../proxy/claude-settings"
+import { clearWatch } from "../proxy/watch"
 import { sessionArgs, shortId } from "../sessions"
 import { line, listFiles, note, ok } from "../terminal/ui"
 import type { Command } from "../types"
@@ -29,6 +30,7 @@ export const stop: Command = {
       return
     }
     const touched = editSettings(claudeConfigDirs(config), (settings) => withoutEunoe(settings, config.port))
+    clearWatch()
     line()
     ok("Claude Code no longer routed through eunoe")
     listFiles(touched)

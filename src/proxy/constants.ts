@@ -22,6 +22,7 @@ export const MODEL_LOOKUP_TIMEOUT_MS = 5_000
 export const MAX_EVENT_BUFFER = 4_000_000
 export const LOGGED_ERROR_CHARS = 500
 export const IDLE_TIMEOUT_SECONDS = 255
+export const UPSTREAM_ERROR_STATUS = 502
 
 export const SESSION_SEEN_INTERVAL_MS = 30_000
 export const SESSION_HEAD_BYTES = 65_536
@@ -29,7 +30,7 @@ export const SESSIONS_KEPT = 200
 export const FINGERPRINT_HEX_CHARS = 24
 export const INJECTED_BLOCK = /^<(?:recalled-context|handoff)[\s>]/
 export const HANDOFF_TAG = "handoff"
-export const CONTINUE_TRIGGER = /\{continue:([A-Za-z0-9-]{8,})\}/
+export const CONTINUE_TRIGGER = /\{ee:continue:([A-Za-z0-9-]{8,})\}/
 
 export const FINGERPRINT_LENGTH = 12
 export const SKILL_MARKER = /Base directory for this skill: ([^\s"\\]+)/g
