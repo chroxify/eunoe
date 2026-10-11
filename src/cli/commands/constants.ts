@@ -29,9 +29,6 @@ export const SETTING_RESET = "default"
 
 export const SESSIONS_SHOWN = 5
 
-export const SESSION_ACTIONS = ["continue", "peek", "load", "show"] as const
-export const PAGER = process.env.PAGER ?? "less"
-
 export const ASK_INDENT = 6
 export const ASK_MIN_WIDTH = 40
 export const ASK_MAX_WIDTH = 100

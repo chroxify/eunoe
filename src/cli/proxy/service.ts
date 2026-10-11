@@ -24,7 +24,7 @@ export async function startService(config: Config) {
     line(`    ${c.cyan("eunoe serve")}`)
     return false
   }
-  launchd.installAgent([process.execPath, path.join(import.meta.dir, "main.ts"), "serve"], paths.proxyLog)
+  launchd.installAgent([process.execPath, path.resolve(process.argv[1] ?? ""), "serve"], paths.proxyLog)
   const running = await probe(config.port)
   if (running && runsStaleCode(running)) {
     launchd.restartAgent()

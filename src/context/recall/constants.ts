@@ -1,4 +1,4 @@
-export const RECALL_REMINDERS = /<(system-reminder|system-message|recalled-context|tool-evidence)>[\s\S]*?<\/\1>/g
+export const RECALL_REMINDERS = /<(system-reminder|system-message|recalled-context|tool-evidence|handoff)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g
 export const RECALL_WINDOW_LINES = 6
 export const RECALL_SHOWN_LINES = 8
 export const RECALL_PER_QUERY = 12

@@ -251,13 +251,15 @@ resumes. A subset of arms or models runs faster:
 ### Handoff suite
 
 The cold start: a fresh Claude Code session continuing work an earlier
-session did, with the earlier session carried over by injection, by recall
-or by the agent loading it itself. It reuses the planted sessions and their
-scorer, so `out/planted/sessions` and `out/planted/canon` must exist. Its
-arms, how to run it and how the proxy takes part are in
-[`handoff/README.md`](handoff/README.md); the pre-registered design is
-`handoff/SPEC.md` and the checklist both shipped features were held to is
-`handoff/VALIDATION.md`.
+session did. It reuses the planted sessions and their scorer, so
+`out/planted/sessions` and `out/planted/canon` must exist. Injecting the
+earlier session's folded view and having the agent load it itself with
+`eunoe load` both remember 98% of its facts and apply 95% of its rules; left
+to pick the session on its own, the agent is wrong about a third of the time,
+which is why only the manual route shipped. Its arms, how to run it and which
+arms still run against this tree are in [`handoff/README.md`](handoff/README.md);
+the pre-registered design is `handoff/SPEC.md` and the table is
+`results/handoff-test.md`.
 
 ### Rerunning on a new eunoe version
 
@@ -295,7 +297,7 @@ has no business in an end-to-end run.
 | `planted/` | The planted-fact suite: generation, runs, exact-match scoring, report. |
 | `real/` | The real-session suite: cut points, questions, runs, judges, continuation in worktrees. |
 | `evals/` | The component evals: evidence pickers, recall rankers, the budget simulation. |
-| `handoff/` | The handoff suite, with its own README, spec and validation checklist. |
+| `handoff/` | The handoff suite: the cold start, with its own README and spec. |
 | `lib/` | Shared plumbing: the Claude CLI runner with account pinning and credit fallback, proxy spawning, session-file helpers, the Jev client, JSON extraction, a detacher. |
 | `tools/` | Instruments used to find confounds (the system-prompt switch on resume, fingerprint diffs, a live `/compact` probe) and the embedder dependencies for the retrieval matrix. |
 | `out/` | Raw outputs. Git-ignored: it holds real session transcripts and repository code. |

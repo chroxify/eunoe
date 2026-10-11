@@ -4,7 +4,7 @@ export const TAGLINE = "Context management for Claude Code that never forgets wh
 export const COMMAND_GROUPS: Array<[title: string, names: string[]]> = [
   ["Proxy", ["start", "stop", "status", "replay", "uninstall"]],
   ["Context", ["mode", "settings"]],
-  ["Sessions", ["sessions", "peek", "load", "continue"]],
+  ["Sessions", ["sessions"]],
 ]
 export const GLOBAL_OPTIONS: OptionRow[] = [
   ["-h, --help", "Show help for a command"],

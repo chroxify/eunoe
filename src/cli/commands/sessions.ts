@@ -1,14 +1,13 @@
-import { spawnSync } from "node:child_process"
-import { askOf, candidatesHere, peekText, shortId, titleOf, tokensOf } from "../sessions"
+import { readConfig } from "../../config"
+import { routedDirs } from "../proxy/inspect"
+import { askOf, candidatesHere, continuePrompt, copy, shortId, tokensOf } from "../sessions"
 import { browse, filterCandidates } from "../sessions/browse"
 import { UNTITLED } from "../sessions/constants"
 import type { SessionCandidate } from "../sessions/types"
-import { input, interactive, select } from "../terminal/prompt"
-import { ago, c, fail, line, note, wrap } from "../terminal/ui"
+import { interactive } from "../terminal/prompt"
+import { ago, c, fail, line, ok, warn, wrap } from "../terminal/ui"
 import type { Command } from "../types"
-import { ASK_INDENT, ASK_MAX_WIDTH, ASK_MIN_WIDTH, PAGER, SESSION_ACTIONS } from "./constants"
-import { handOff } from "./continue"
-import { loadedLine, writeLoaded } from "./load"
+import { ASK_INDENT, ASK_MAX_WIDTH, ASK_MIN_WIDTH } from "./constants"
 
 const askWidth = () => Math.max(ASK_MIN_WIDTH, Math.min(ASK_MAX_WIDTH, (process.stdout.columns ?? ASK_MAX_WIDTH + ASK_INDENT) - ASK_INDENT - 12))
 
@@ -26,7 +25,7 @@ function show(cand: SessionCandidate) {
   line()
 }
 
-export function listSessions(words: string, candidates: SessionCandidate[]) {
+function listSessions(words: string, candidates: SessionCandidate[]) {
   const order = filterCandidates(words, candidates)
   line()
   line(`  ${c.dim(words ? `Earlier sessions here, closest to "${words}" first` : "Earlier sessions here, newest first")}`)
@@ -35,43 +34,26 @@ export function listSessions(words: string, candidates: SessionCandidate[]) {
   if (order.length === 0) line(`  ${c.dim(`Nothing matches "${words}".`)}`)
 }
 
-async function act(cand: SessionCandidate): Promise<boolean> {
-  const labels: Record<(typeof SESSION_ACTIONS)[number], [string, string]> = {
-    continue: ["Continue from it", "copy the prompt for a new chat"],
-    peek: ["Peek", "the excerpts that match some words"],
-    load: ["Load", "write the whole record to a file"],
-    show: ["Show", `read it in ${PAGER}`],
-  }
-  const action = await select(
-    `${shortId(cand.id)}  ${titleOf(cand)}`,
-    SESSION_ACTIONS.map((value) => ({ value, label: labels[value][0], hint: labels[value][1] })),
-  )
-  if (action === "continue") handOff(cand.id)
-  else if (action === "load") line(loadedLine(cand, writeLoaded(cand)))
-  else if (action === "peek") {
-    const words = await input("Look for", "an error, a value, a decision")
-    if (!words) return true
-    line()
-    line(peekText(cand, words) ?? c.dim(`Nothing in ${shortId(cand.id)} matches "${words}".`))
-    line()
-    return true
-  } else if (action === "show") {
-    spawnSync(PAGER, [writeLoaded(cand).file], { stdio: "inherit" })
-    return true
-  }
-  return false
+function handOff(id: string) {
+  const prompt = continuePrompt(id)
+  line()
+  ok(`${c.bold(prompt)}  ${copy(prompt) ? c.dim("copied") : ""}`)
+  if (routedDirs(readConfig()).length === 0) warn("Claude Code isn't routed through eunoe, so the agent won't know to load it (eunoe start).")
+  line()
 }
 
 export const sessions: Command = {
-  summary: "Browse earlier sessions in this directory",
+  summary: "Pick an earlier session for the agent to continue from",
   usage: "eunoe sessions [words] [--list]",
   details: [
     "Browse this directory's earlier Claude Code sessions: type to filter, pick",
-    "one, then continue from it, peek at it, load it or read it. Words start the",
-    "filter. --list, or a pipe, prints them newest first with each one's first",
-    "and last request, which is what the agent reads when it runs this itself;",
-    "eunoe load <id> then gives it the whole record and eunoe peek <id> <words>",
-    "just the excerpts that match.",
+    "one, and a {continue:<id>} marker is copied. Paste it into any Claude Code",
+    "chat along with what you want done: eunoe attaches that whole session to the",
+    "message, and its dropped output stays searchable from then on. Words start",
+    "the filter.",
+    "",
+    "--list, or a pipe, prints the sessions newest first with each one's first",
+    "and last request. That is what the agent reads when it runs this itself.",
   ],
   options: [["--list", "Print the sessions instead of browsing them"]],
   async run(args) {
@@ -82,13 +64,7 @@ export const sessions: Command = {
     const candidates = candidatesHere()
     if (candidates.length === 0) fail("No earlier sessions in this directory.")
     if (args.includes("--list") || !interactive) return listSessions(words, candidates)
-    let query = words
-    while (true) {
-      const chosen = await browse("Earlier sessions here", candidates, query)
-      if (!chosen) return
-      if (!(await act(chosen))) return
-      note(c.dim("back to the list"))
-      query = ""
-    }
+    const chosen = await browse("Earlier sessions here", candidates, words, "↑↓ move · type to filter · enter copy the marker · esc quit")
+    if (chosen) handOff(chosen.id)
   },
 }

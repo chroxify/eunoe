@@ -15,6 +15,7 @@ import { subagentChunks } from "../transcript/subagents"
 import { compact } from "./compaction"
 import { DEFAULT_RATIO, FINGERPRINT_HEX_CHARS, INJECTED_BLOCK } from "./constants"
 import { estimator, sizeOf, targetSize } from "./estimate"
+import { activeHandoffs, attachHandoffs, handoffChunks, withHandoffs } from "./handoff"
 import { readState, saveState } from "./state"
 import type { Prefetched, Rewrite, RewriteInput } from "./types"
 
@@ -45,7 +46,18 @@ function droppedChunks(original: Body, result: Rewrite, transcript: string | nul
   for (const message of result.body.messages) for (const b of blocks(message)) if (b.type === "tool_result") kept.set(b.tool_use_id, resultText(b))
   const own = recallChunks(original.messages, kept)
   const session = own.length > 0 || !transcript ? own : recallChunks([...sessionMessages(transcript), { role: "user", content: "" }], kept)
-  return transcript ? [...session, ...subagentChunks(transcript)] : session
+  const all = transcript ? [...session, ...subagentChunks(transcript)] : session
+  const handoffs = result.threadKey ? activeHandoffs(readState(result.threadKey).handoffs) : {}
+  return [...handoffChunks(handoffs), ...all]
+}
+
+function handed(result: Rewrite): Rewrite {
+  if (!result.threadKey) return result
+  const handoffs = activeHandoffs(readState(result.threadKey).handoffs)
+  const messages = withHandoffs(result.body.messages, messageFingerprint, handoffs)
+  if (messages === result.body.messages) return result
+  const attached = Object.values(handoffs)
+  return { ...result, body: { ...result.body, messages }, note: { ...result.note, handoff: attached.reduce((sum, h) => sum + h.text.length, 0), handoffFrom: attached.map((h) => h.label).join(", ") } }
 }
 
 function recallTarget(original: Body, result: Rewrite): { key: string; text: string } | null {
@@ -87,7 +99,7 @@ export function prefetchRecall(input: RewriteInput, rerank: Reranker): Promise<P
 }
 
 function once(input: RewriteInput): Rewrite {
-  const result = strategize(input)
+  const result = handed(strategize(input))
   return wantsRecall(input) ? recalled(input, input.body, result, input.transcript?.jsonl ?? null) : result
 }
 
@@ -182,15 +194,17 @@ function strategize(input: RewriteInput): Rewrite {
   if (turns.length === 0) return pass(body)
   const threadKey = `${sessionId}-${turnFingerprint(turns[0])}`
   const guide = transcript ? searchGuide(transcript) : null
+  const state = readState(threadKey)
+  if (attachHandoffs(input, state, messageFingerprint)) saveState(threadKey, state)
+  const handoffs = activeHandoffs(state.handoffs)
 
   const forced = evalStrategy(input, turns, threadKey, guide)
   if (forced) return forced
 
   const based = isAgentThread(body) ? { ...body, system: sectioned(body.system) } : body
   if (body.messages.length < 2) return { body: based, threadKey, note: { action: "full", turns: turns.length } }
-  const state = readState(threadKey)
   const recalls = wantsRecall(input) ? activeRecalls(state.recalls) : {}
-  const decorate = (messages: Message[]) => withRecall(messages, messageFingerprint, recalls)
+  const decorate = (messages: Message[]) => withRecall(withHandoffs(messages, messageFingerprint, handoffs), messageFingerprint, recalls)
   const result = compact({ body: based, config, state, window: input.window, guide, mayCompact: input.mayCompact, omittedBefore: input.omittedBefore, decorate })
   if (result.stateChanged) saveState(threadKey, state)
   return {

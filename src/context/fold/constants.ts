@@ -8,7 +8,9 @@ export const CLEARED_INPUT_KEPT = 500
 
 export const REMINDER_ONLY = /^\s*(?:<system-reminder>[\s\S]*?<\/system-reminder>\s*)+$/
 
-export const FOLD_REMINDERS = /<(system-reminder|system-message|recalled-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g
+export const FOLD_CAP_CHARS = 400_000
+
+export const FOLD_REMINDERS = /<(system-reminder|system-message|recalled-context|handoff)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g
 
 export const REREADABLE_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite", "Edit", "Write", "MultiEdit", "NotebookEdit"])
 

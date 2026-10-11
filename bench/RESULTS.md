@@ -228,7 +228,6 @@ exact-match hit. Rerankers reorder BM25's top 30. Tables:
 | **jev-preview rerank over bm25** | **95%** | **95%** | 292 / 520 | 2.0 | 4.6k |
 | jev-latest over hybrid bge-small | 95% | 93% | 312 / 539 | 2.0 | 4.6k |
 | jev-preview over hybrid bge-small | 95% | 93% | 319 / 487 | 2.0 | 4.6k |
-| bge-base, e5, gte, nomic (dense + hybrid), 3 cross-encoders, Haiku/Sonnet rerank, Haiku rewrite | running | | | | |
 
 Jev (typesafe.ai "system one" models, `/v1/systemone`, a `choice` question
 over the 30 candidates) is the first arm to beat BM25: +7 planted, +4 real,
@@ -285,25 +284,6 @@ Nothing beats Jev. Hybrid bm25 + e5-small is the best free ranker and a
 candidate fallback when no Typesafe key is present (needs a local embedding
 index, ~15 s per 1k chunks); not wired yet.
 
-### Status
-
-
-- Jev reranking is wired into the proxy (`src/context/recall/rerank.ts`,
-  `eval.rerank`, key from `TYPESAFE_API_KEY` or `~/.eunoe/typesafe-key`;
-  the lexical order is used unchanged if the call fails or exceeds 4 s).
-  `rolling+both3` end to end: dev 100% recall (0 unknown, 0 wrong, 140k
-  context vs full's 411k, +14 s wall per session); test 99% recall, worst
-  bucket 99%, tasks 95% (+3.6 vs native, [−1.2, +8.3], the first arm whose
-  interval clears P4), 0.1 lookups, 305k tokens per session. **Adopted** as
-  the default recall ranker (`eval.rerank: { model: "jev-preview" }`).
-- `rolling+both2` on dev and test: 99% recall on both, 0 lookups per session
-  on dev (rolling+both made about 3), 38% fewer tokens.
-- Evidence on real sessions trails planted (71–75% vs 97%): real answers are
-  often plain lines (a stash message, a file path in a listing) that no
-  pattern should keep. That gap is the honest limit of pattern-based
-  evidence; a small model choosing lines at fold time is the next experiment
-  if it matters end to end.
-
 ## 7. Corrections made along the way
 
 - The `full` arm was being cut by eunoe in the first pass; rerun uncut.
@@ -311,7 +291,7 @@ index, ~15 s per 1k chunks); not wired yet.
   74 verdicts flipped, all arms, each read.
 - Runs with no answers (API safety filter on native s24) excluded, not scored 0.
 - Native was answering with a shorter system prompt than other arms in the
-  first the real-session suite pass; every arm is now pinned to the same prompt per point.
+  first real-session pass; every arm is now pinned to the same prompt per point.
 - Union evidence arm was unioning with v1 selection; fixed and rerun.
 - Generator JSON parser cut replies at the first code fence; fixed, 10
   sessions regenerated.
@@ -327,5 +307,19 @@ and half the time. Instruction application ties native within noise.
 ## 9. Decision
 
 Default mode: rolling (keep 3, 100k budget) + pattern evidence + bm25 recall
-reranked by Jev, falling back to bm25 order without a key. Secondary: compact
-(same evidence and recall, one fold at the window). Off.
+reranked by Jev (`src/context/recall/rerank.ts`, key from `TYPESAFE_API_KEY`
+or `~/.eunoe/typesafe-key`, the lexical order used unchanged if the call fails
+or exceeds 4 s). Secondary: compact (same evidence and recall, one fold at
+the window). Off.
+
+## 10. Cold start
+
+The handoff suite (`handoff/SPEC.md`, `results/handoff-test.md`) asked how a
+fresh session should receive an earlier one. On the held-out split, injecting
+the source session's folded view remembers 98% of its facts and applies 95%
+of its rules at a 129k prompt; the agent loading the session itself with
+`eunoe load`, when told which, matches that exactly. Left to choose the
+session on its own, the agent loads the wrong one about a third of the time
+and recall falls to 33 to 86%; the best ranker on real history is right 86%
+of the time. Decision: ship the manual route (`eunoe continue`, `eunoe load`,
+`eunoe peek`), ship no automatic selection or injection.

@@ -40,6 +40,18 @@ describe("what is sent always fits", () => {
     }
   })
 
+  test("a handoff attached to the live message is counted, so the cut makes room for it", () => {
+    const sessionId = freshSession()
+    const messages: Message[] = [user("first"), reply("ok")]
+    for (let n = 1; n <= 20; n += 1) messages.push(user(`task ${n}`), call(`a${n}`), result(`a${n}`, 6_000), reply(`answer ${n}`))
+    const live = user("{continue:prior-xx-aaaaaaaa} pick it up")
+    messages.push(live, call("z"), result("z", 400))
+    saveState(threadOf(sessionId, messages), { handoffs: { [messageFingerprint(live)]: { label: "Earlier", source: "/nowhere.jsonl", text: "h".repeat(250_000) } } })
+    const out = rewrite({ body: body(messages), sessionId, config: config({ mode: "default" }), transcript: null, window: WINDOW, mayCompact: true })
+    expect(JSON.stringify(out.body.messages.at(-3))).toContain('<handoff from=\\"Earlier\\">')
+    expect(sent(out.body)).toBeLessThanOrEqual(LIMIT)
+  })
+
   test("recall too big to fit even after the cut is left out of the request rather than sent over the line", () => {
     const sessionId = freshSession()
     const messages: Message[] = [user("first"), reply("ok")]

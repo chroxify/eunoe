@@ -5,6 +5,7 @@ import type { Command } from "../types"
 export const peek: Command = {
   summary: "Show the excerpts of an earlier session that match some words",
   usage: "eunoe peek <id> <words>",
+  hidden: true,
   details: [
     "Searches one earlier session in this directory for the words and prints the",
     "excerpts that match: tool output and your messages, quoted exactly. For a",

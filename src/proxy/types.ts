@@ -3,7 +3,14 @@ import type { CompactOptions } from "../context/fold/types"
 import type { Body, Message } from "../context/types"
 import type { TranscriptRef } from "../transcript/types"
 
+export interface Handoff {
+  label: string
+  source: string
+  text: string
+}
+
 export interface ThreadState {
+  handoffs?: Record<string, Handoff | null>
   cut?: string
   keep?: number
   cleared?: number

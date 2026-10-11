@@ -29,11 +29,20 @@ sessions in flight (arms within a session run concurrently).
 | `report.ts` | per-arm, per-scenario and per-fact-type tables, paired CIs against `cold`, hypotheses |
 | `select.ts` | which session to hand off from: recency, bm25, bm25 over the folded view, e5, Jev |
 
-## How the proxy takes part
+## How the arms reach the fresh session
 
-Two trusted headers, honoured only when the proxy runs with
-`eval.trustHeaders`: `x-eunoe-handoff-file` names a file whose text is put
-into a `<handoff>` block on the fresh session's first prompt, and
-`x-eunoe-handoff-source` names a session file whose dropped output and
-narrative join the recall index, labelled as the previous session. The code is
-`src/context/handoff.ts` and the `handoff` branch of `src/proxy/rewrite.ts`.
+Every arm sends `x-eunoe-canonical` so the fresh session gets the same system
+prompt and tools as the other suites, and `cold+hint` sends
+`x-eunoe-transcript` so the one-line hint names a real file. The `agent*`
+arms need nothing else: the fresh session's system prompt teaches `eunoe
+sessions`, `eunoe load` and `eunoe peek` (`AGENT_SECTIONS` in
+`constants.ts`), and the agent runs the CLI in `bin/` itself.
+
+The injection and cross-session recall arms (`full`, `folded*`, `rules`,
+`brief-*`, `*recall*`, `auto*`, `multi*`) send `x-eunoe-handoff-file` and
+`x-eunoe-handoff-source`. Those headers were honoured by an experimental
+proxy build that put the file into a `<handoff>` block on the first prompt
+and indexed the source session for recall. The suite's result was to ship
+the manual route instead, so that build was never committed and the shipped
+proxy ignores the headers: those arms cannot be rerun against this tree, and
+their numbers in `results/handoff-test.md` are the record.

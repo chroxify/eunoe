@@ -2,13 +2,15 @@ import { spawnSync } from "node:child_process"
 import { claudeConfigDirs, readConfig } from "../../config"
 import { SESSION_ID_PATTERN } from "../../config/constants"
 import { foldedView, sourceChunks } from "../../context/fold"
+import { FOLD_CAP_CHARS } from "../../context/fold/constants"
 import { recallFor } from "../../context/recall"
 import { DEFAULT_RATIO } from "../../proxy/constants"
+import { continueToken } from "../../proxy/handoff"
 import { seenSessions } from "../../proxy/sessions"
 import { subagentChunks } from "../../transcript/subagents"
 import { flagValues } from "../terminal/args"
 import { fail, tokens } from "../terminal/ui"
-import { ASK_CHARS, CLIPBOARDS, FOLD_CAP_CHARS, LIVE_SESSION_ENV, PEEK_CHARS, PEEK_MIN_TERMS, PEEK_PER_QUERY, PEEK_STRIP, SHORT_ID_LENGTH } from "./constants"
+import { ASK_CHARS, CLIPBOARDS, LIVE_SESSION_ENV, PEEK_CHARS, PEEK_MIN_TERMS, PEEK_PER_QUERY, PEEK_STRIP, SHORT_ID_LENGTH } from "./constants"
 import { sessionCandidates } from "./source"
 import type { SessionCandidate } from "./types"
 
@@ -50,7 +52,7 @@ export function askOf(text: string | undefined): string {
   return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), ASK_CHARS / 2))}…`
 }
 
-export const continuePrompt = (id: string) => `This continues an earlier session: run \`eunoe load ${shortId(id)}\``
+export const continuePrompt = (id: string) => continueToken(shortId(id))
 
 export function copy(text: string): boolean {
   for (const [cmd, args] of CLIPBOARDS) {

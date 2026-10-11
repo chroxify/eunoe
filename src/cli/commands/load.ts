@@ -2,8 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { paths } from "../../config/constants"
 import { foldedView } from "../../context/fold"
+import { FOLD_CAP_CHARS } from "../../context/fold/constants"
 import { candidateOf, candidatesHere, shortId, titleOf } from "../sessions"
-import { FOLD_CAP_CHARS } from "../sessions/constants"
 import type { SessionCandidate } from "../sessions/types"
 import { line } from "../terminal/ui"
 import type { Command } from "../types"
@@ -22,6 +22,7 @@ export const loadedLine = (cand: SessionCandidate, written: ReturnType<typeof wr
 export const load: Command = {
   summary: "Write an earlier session to a file for the agent to read",
   usage: "eunoe load <id>",
+  hidden: true,
   details: [
     "Writes the whole record of an earlier session in this directory to a file:",
     "your messages, the key output lines and the agent's replies. The agent runs",

@@ -342,21 +342,26 @@ eunoe uninstall              # stop and remove the background proxy
 
 ### Earlier sessions
 
-A different big problem with Claude is that new chats always start cold. eunoe helps you carry an earlier session into it to solve this, run `eunoe
-continue`, pick the session, and paste the copied line into the chat along
-with what you want done. The agent loads the session itself and reads all of
-it before acting: your messages, the key output lines and its earlier
-replies. eunoe never guesses which session you mean or injects one on its own;
-in the benchmark that choice was wrong a third of the time, while the manual
-route remembered 98% of an earlier session's facts and kept 95% of its rules.
+A different big problem with Claude is that new chats always start cold. eunoe
+helps you carry an earlier session into one: run `eunoe sessions`, pick the
+session (type to filter), and paste the copied `{continue:<id>}` marker into
+the chat along with what you want done. eunoe attaches that whole session to
+the message, folded the same way it folds turns in a live session: your
+messages, the key output lines and the agent's replies, in order. From then on
+the earlier session's dropped tool output is searchable too, so an exact value
+from it comes back as recalled context when a later message is about it.
 
-The agent is taught three commands in its system prompt and you can run them too:
+You always name the session. eunoe never guesses which one you mean or injects
+one on its own; in the benchmark that choice was wrong a third of the time,
+while a named session remembered 98% of its facts and kept 95% of its rules.
 
 ```sh
-eunoe sessions [words]       # earlier sessions in this directory, newest first or closest to the words
-eunoe load <id>              # write one to ~/.eunoe/loaded/<id>.md for the agent to read whole
-eunoe peek <id> <words>      # just the excerpts that match, for one fact or error
+eunoe sessions [words]       # browse earlier sessions here; enter copies {continue:<id>}
 ```
+
+The agent is also taught two commands for digging on its own: `eunoe load
+<id>` writes a session to `~/.eunoe/loaded/<id>.md` for it to read whole, and
+`eunoe peek <id> <words>` prints just the excerpts that match.
 
 ### Per session
 

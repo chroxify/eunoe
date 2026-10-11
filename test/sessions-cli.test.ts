@@ -97,7 +97,7 @@ describe("load", () => {
     expect(existsSync(written.file)).toBe(true)
   })
 
-  test("the prompt eunoe continue copies names the session to load", () => {
-    expect(continuePrompt("prior-seo-bbbbbbbb")).toBe("This continues an earlier session: run `eunoe load prior-se`")
+  test("the prompt eunoe sessions copies names the session to load", () => {
+    expect(continuePrompt("prior-seo-bbbbbbbb")).toBe("{continue:prior-se}")
   })
 })
