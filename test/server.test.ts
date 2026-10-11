@@ -37,15 +37,23 @@ beforeAll(() => {
 afterAll(() => upstream.stop(true))
 
 function post(messages: unknown, headers: Record<string, string> = {}) {
-  return handle(new Request("http://127.0.0.1/v1/messages", {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: "Bearer test", ...headers },
-    body: JSON.stringify({ model: "claude-test", system: "s", tools: [{ name: "Bash" }], messages }),
-  }))
+  return handle(
+    new Request("http://127.0.0.1/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer test", ...headers },
+      body: JSON.stringify({ model: "claude-test", system: "s", tools: [{ name: "Bash" }], messages }),
+    }),
+  )
 }
 
 const lastTo = (path: string) => [...received].reverse().find((r) => r.path === path)!
-const logged = () => (existsSync(paths.requests) ? readFileSync(paths.requests, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : [])
+const logged = () =>
+  existsSync(paths.requests)
+    ? readFileSync(paths.requests, "utf8")
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l))
+    : []
 
 describe("proxy", () => {
   test("when the API says the prompt is too long, eunoe learns the real size, cuts and sends again; Claude Code never sees the error", async () => {
@@ -90,7 +98,7 @@ describe("proxy", () => {
     const sent = lastTo("/v1/messages").body
     expect(sent).toContain("<context-compacted>")
     expect(sent).toContain("answer 20")
-    expect(sent).not.toContain("step a1\"")
+    expect(sent).not.toContain('step a1"')
     await Bun.sleep(50)
     expect(logged().find((r) => String(r.thread).startsWith(id))).toMatchObject({ compacted: true, window: 60_000 })
   })
@@ -166,17 +174,19 @@ describe("evaluation logging", () => {
   })
 })
 
-
 describe("canonical context", () => {
   test("the first request captures system and tools; later ones are replaced, keeping their own billing line", async () => {
     const previous = readFileSync(paths.config, "utf8")
     writeFileSync(paths.config, JSON.stringify({ ...JSON.parse(previous), mode: "off", eval: { trustHeaders: true } }))
     const file = `${paths.threads}/canonical-${freshSession()}.json`
-    const send = (system: string, tool: string) => handle(new Request("http://127.0.0.1/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-eunoe-canonical": file, "x-claude-code-session-id": freshSession() },
-      body: JSON.stringify({ model: "claude-test", system: [{ type: "text", text: `x-anthropic-billing-header: ${system}\nYou are an agent` }], tools: [{ name: "Bash", description: tool }], messages: session(1) }),
-    }))
+    const send = (system: string, tool: string) =>
+      handle(
+        new Request("http://127.0.0.1/v1/messages", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-eunoe-canonical": file, "x-claude-code-session-id": freshSession() },
+          body: JSON.stringify({ model: "claude-test", system: [{ type: "text", text: `x-anthropic-billing-header: ${system}\nYou are an agent` }], tools: [{ name: "Bash", description: tool }], messages: session(1) }),
+        }),
+      )
     try {
       await (await send("v=1", "runs commands")).text()
       await (await send("v=2", "runs commands, differently")).text()

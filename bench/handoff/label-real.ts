@@ -2,8 +2,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { claude } from "../lib/claude"
 import { NO_TOOLS } from "../lib/constants"
 import { extractJson } from "../lib/json"
-import { realCases, type Label, type RealCase } from "./real-cases"
-import { HANDOFF_OUT, LABELS_FILE, LABEL_MODEL } from "./constants"
+import { HANDOFF_OUT, LABEL_MODEL, LABELS_FILE } from "./constants"
+import { type Label, type RealCase, realCases } from "./real-cases"
 
 const PARALLEL = Number(process.argv.find((a) => a.startsWith("--parallel="))?.slice(11) ?? 4)
 const labels: Record<string, Label> = existsSync(LABELS_FILE) ? JSON.parse(readFileSync(LABELS_FILE, "utf8")) : {}
@@ -25,20 +25,22 @@ const todo = realCases().filter((c) => !labels[c.id])
 console.log(`${todo.length} cases to label (${Object.keys(labels).length} cached)`)
 let next = 0
 let done = 0
-await Promise.all(Array.from({ length: PARALLEL }, async () => {
-  for (;;) {
-    const c = todo[next++]
-    if (!c) return
-    const out = await claude(["--model", LABEL_MODEL, ...NO_TOOLS], { cwd: HANDOFF_OUT, stdin: PROMPT(c), account: process.env.BENCH_CSWAP_ACCOUNT })
-    try {
-      const json = extractJson(String(out.result ?? ""))
-      const short = (id: string) => c.candidates.find((a) => a.id.startsWith(String(id)))?.id ?? null
-      labels[c.id] = { source: json.source && json.source !== "none" ? short(json.source) : null, partial: (json.partial ?? []).map(short).filter(Boolean), why: String(json.why ?? "") }
-      writeFileSync(LABELS_FILE, JSON.stringify(labels, null, 1))
-    } catch {
-      console.log(`unparsed ${c.id.slice(0, 8)}: ${String(out.result).slice(0, 120)}`)
+await Promise.all(
+  Array.from({ length: PARALLEL }, async () => {
+    for (;;) {
+      const c = todo[next++]
+      if (!c) return
+      const out = await claude(["--model", LABEL_MODEL, ...NO_TOOLS], { cwd: HANDOFF_OUT, stdin: PROMPT(c), account: process.env.BENCH_CSWAP_ACCOUNT })
+      try {
+        const json = extractJson(String(out.result ?? ""))
+        const short = (id: string) => c.candidates.find((a) => a.id.startsWith(String(id)))?.id ?? null
+        labels[c.id] = { source: json.source && json.source !== "none" ? short(json.source) : null, partial: (json.partial ?? []).map(short).filter(Boolean), why: String(json.why ?? "") }
+        writeFileSync(LABELS_FILE, JSON.stringify(labels, null, 1))
+      } catch {
+        console.log(`unparsed ${c.id.slice(0, 8)}: ${String(out.result).slice(0, 120)}`)
+      }
+      if (++done % 20 === 0) console.log(`${done}/${todo.length}`)
     }
-    if (++done % 20 === 0) console.log(`${done}/${todo.length}`)
-  }
-}))
+  }),
+)
 console.log("done")

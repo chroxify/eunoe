@@ -1,12 +1,12 @@
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import path from "node:path"
 import { foldedView, sourceChunks } from "../../src/context/fold"
 import { recallFor } from "../../src/context/recall"
 import { sessionMessages } from "../../src/transcript/messages"
 import { loadMetas } from "../planted/run"
+import { INJECT, LOADED, PAGE_CHARS, PEEK_CHARS } from "./constants"
 import { sessionFile } from "./prepare"
 import { rankSources } from "./run"
-import { INJECT, LOADED, PAGE_CHARS, PEEK_CHARS } from "./constants"
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import path from "node:path"
 
 const fail = (message: string): never => {
   console.error(message)
@@ -25,13 +25,16 @@ if (import.meta.main) {
     console.log(words ? `Earlier sessions in this project, closest match first:` : `Earlier sessions in this project, newest first:`)
     for (const m of order) {
       const asks = sessionMessages(sessionFile(m)).filter((x) => x.role === "user" && typeof x.content === "string" && !x.content.startsWith("<"))
-      const clip = (x: any) => String(x?.content ?? "").replace(/\s+/g, " ").slice(0, 160)
+      const clip = (x: any) =>
+        String(x?.content ?? "")
+          .replace(/\s+/g, " ")
+          .slice(0, 160)
       console.log(`${m.id}  ${m.title}  (${m.turns} turns, ~${Math.round(m.tokens / 1000)}k tokens)\n      first ask: ${clip(asks[0])}\n      last ask:  ${clip(asks.at(-1))}`)
     }
   } else if (command === "peek") {
     const [id, ...words] = rest
     const meta = byId(id)
-    if (!words.length) fail("Say what to look for: eunoe peek <id> <words>")
+    if (words.length === 0) fail("Say what to look for: eunoe peek <id> <words>")
     const chunks = sourceChunks(sessionMessages(sessionFile(meta)), meta.title, true)
     console.log(recallFor(words.join(" "), chunks, { maxChars: PEEK_CHARS, maxCharsMulti: PEEK_CHARS, perQuery: 6, minTerms: 1 }) ?? `Nothing in ${meta.id} matches "${words.join(" ")}".`)
   } else if (command === "load") {

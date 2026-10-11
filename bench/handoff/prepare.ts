@@ -1,17 +1,17 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { FOLD_CAP_CHARS } from "../../src/context/constants"
-import { foldedView } from "../../src/context/fold"
+import { FOLD_CAP_CHARS } from "../../src/cli/sessions/constants"
 import { blocks, describeToolCall, resultText } from "../../src/context/content"
-import { isPrompt, splitTurns } from "../../src/context/turns"
+import { foldedView } from "../../src/context/fold"
+import { isPrompt, splitTurns } from "../../src/context/fold/turns"
 import { sessionMessages } from "../../src/transcript/messages"
-import { extractJson } from "../lib/json"
 import { claude } from "../lib/claude"
 import { NO_TOOLS } from "../lib/constants"
-import { type Meta } from "../planted/generate"
-import { PLANT_OUT, SESSIONS } from "../planted/constants"
+import { extractJson } from "../lib/json"
+import { SESSIONS } from "../planted/constants"
+import type { Meta } from "../planted/generate"
 import { loadMetas } from "../planted/run"
-import { type Scenario } from "./arms"
+import type { Scenario } from "./arms"
 import { BRIEF, BRIEF_MODELS, HANDOFF_OUT, INJECT, PROMPTS, RULES, RULES_MODEL, SCENARIOS } from "./constants"
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
@@ -20,30 +20,48 @@ const norm = (t: string) => t.toLowerCase().replace(/[`'"]/g, "")
 export const sessionFile = (meta: Meta) => path.join(SESSIONS, `${meta.id}.jsonl`)
 
 function textOf(message: any): string {
-  return blocks(message).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n").replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim()
+  return blocks(message)
+    .filter((b) => b.type === "text")
+    .map((b) => String(b.text ?? ""))
+    .join("\n")
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .trim()
 }
 
 export function outline(meta: Meta): string {
   const { turns } = splitTurns(sessionMessages(sessionFile(meta)))
-  return turns.filter((t) => isPrompt(t[0])).map((t, i) => `${i + 1}. ${textOf(t[0]).slice(0, 240)}`).join("\n")
+  return turns
+    .filter((t) => isPrompt(t[0]))
+    .map((t, i) => `${i + 1}. ${textOf(t[0]).slice(0, 240)}`)
+    .join("\n")
 }
 
 export function fullTranscript(meta: Meta): string {
   const { turns } = splitTurns(sessionMessages(sessionFile(meta)))
-  return turns.filter((t) => isPrompt(t[0])).map((turn, i) => {
-    const parts = [`### Turn ${i + 1}`, `**You:** ${textOf(turn[0])}`]
-    for (const m of turn.slice(1)) {
-      for (const b of blocks(m)) {
-        if (b.type === "text" && m.role === "assistant" && String(b.text ?? "").trim()) parts.push(`**Agent:** ${String(b.text).trim()}`)
-        if (b.type === "tool_use") parts.push(`[tool] ${describeToolCall(b)}`)
-        if (b.type === "tool_result") parts.push("```\n" + resultText(b).slice(0, 20_000) + "\n```")
+  return turns
+    .filter((t) => isPrompt(t[0]))
+    .map((turn, i) => {
+      const parts = [`### Turn ${i + 1}`, `**You:** ${textOf(turn[0])}`]
+      for (const m of turn.slice(1)) {
+        for (const b of blocks(m)) {
+          if (b.type === "text" && m.role === "assistant" && String(b.text ?? "").trim()) parts.push(`**Agent:** ${String(b.text).trim()}`)
+          if (b.type === "tool_use") parts.push(`[tool] ${describeToolCall(b)}`)
+          if (b.type === "tool_result") parts.push(`\`\`\`\n${resultText(b).slice(0, 20_000)}\n\`\`\``)
+        }
       }
-    }
-    return parts.join("\n\n")
-  }).join("\n\n")
+      return parts.join("\n\n")
+    })
+    .join("\n\n")
 }
 
-const plantedValues = (meta: Meta) => [...new Set(meta.facts.flatMap((f) => [f.answer, f.stale]).filter(Boolean).map(String))]
+const plantedValues = (meta: Meta) => [
+  ...new Set(
+    meta.facts
+      .flatMap((f) => [f.answer, f.stale])
+      .filter(Boolean)
+      .map(String),
+  ),
+]
 const leaks = (text: string, meta: Meta) => plantedValues(meta).filter((v) => norm(text).includes(norm(v)))
 
 const RESUME = (meta: Meta, scenario: Scenario) => `A developer is opening a brand-new Claude Code session on the project below, days after an earlier session, and types the first message. Write that first message.
@@ -74,7 +92,10 @@ async function cached(file: string, make: () => Promise<string>) {
   return text
 }
 
-const NEW_WORK = (meta: Meta, siblings: Meta[]) => `A developer opens a brand-new Claude Code session in the repository below and types the first message: a request for a small piece of NEW work that has nothing to do with any of the earlier sessions listed. It must not fix, continue or extend anything those sessions touched, and must not follow on from them.
+const NEW_WORK = (
+  meta: Meta,
+  siblings: Meta[],
+) => `A developer opens a brand-new Claude Code session in the repository below and types the first message: a request for a small piece of NEW work that has nothing to do with any of the earlier sessions listed. It must not fix, continue or extend anything those sessions touched, and must not follow on from them.
 
 Repository: ${meta.repo}
 The developer writes like this: ${meta.style}
@@ -108,7 +129,7 @@ export async function prepareSession(meta: Meta, log: (m: string) => void) {
       for (let attempt = 0; attempt < 3; attempt += 1) {
         text = (await model(RULES_MODEL, RESUME(meta, scenario), "2000")).trim().replace(/^"|"$/g, "")
         const leaked = leaks(text, meta)
-        if (!leaked.length) break
+        if (leaked.length === 0) break
         log(`${scenario} prompt leaked ${leaked.join(", ")}; retrying`)
       }
       prompts[scenario] = text
@@ -120,8 +141,16 @@ export async function prepareSession(meta: Meta, log: (m: string) => void) {
   await cached(path.join(INJECT, `${meta.id}.rules.md`), async () => {
     const out = await model(RULES_MODEL, RULES(folded))
     let rules: string[] = []
-    try { rules = extractJson(out).rules.map(String) } catch { rules = [out] }
-    const replies = foldedView(messages).split(/\n(?=### Turn )/).slice(-3).map((t) => t.match(/\*\*Agent:\*\* ([\s\S]*)$/)?.[1]?.trim()).filter(Boolean)
+    try {
+      rules = extractJson(out).rules.map(String)
+    } catch {
+      rules = [out]
+    }
+    const replies = foldedView(messages)
+      .split(/\n(?=### Turn )/)
+      .slice(-3)
+      .map((t) => t.match(/\*\*Agent:\*\* ([\s\S]*)$/)?.[1]?.trim())
+      .filter(Boolean)
     return `## Rules from the earlier session\n${rules.map((r) => `- ${r}`).join("\n")}\n\n## Where the earlier session ended\n${replies.map((r) => `- ${r}`).join("\n")}`
   })
   for (const [size, name] of Object.entries(BRIEF_MODELS)) {
@@ -135,11 +164,13 @@ if (import.meta.main) {
   const parallel = Number(arg("parallel") ?? 4)
   console.log(`preparing ${metas.length} sessions`)
   let next = 0
-  await Promise.all(Array.from({ length: parallel }, async () => {
-    while (next < metas.length) {
-      const meta = metas[next++]
-      await prepareSession(meta, (m) => console.log(`[${meta.id} ${meta.repo}] ${m}`)).catch((e) => console.error(`[${meta.id}]`, e))
-    }
-  }))
+  await Promise.all(
+    Array.from({ length: parallel }, async () => {
+      while (next < metas.length) {
+        const meta = metas[next++]
+        await prepareSession(meta, (m) => console.log(`[${meta.id} ${meta.repo}] ${m}`)).catch((e) => console.error(`[${meta.id}]`, e))
+      }
+    }),
+  )
   console.log("done")
 }

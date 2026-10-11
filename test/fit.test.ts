@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
+import { isPrompt, splitTurns, turnFingerprint } from "../src/context/fold/turns"
+import type { Body, Message } from "../src/context/types"
 import { DEFAULT_RATIO } from "../src/proxy/constants"
 import { sizeOf } from "../src/proxy/estimate"
 import { messageFingerprint, rewrite } from "../src/proxy/rewrite"
-import { loadState, saveState } from "../src/proxy/state"
-import { isPrompt, splitTurns, turnFingerprint } from "../src/context/turns"
-import type { Body, Message } from "../src/context/types"
+import { readState, saveState } from "../src/proxy/state"
 import { call, config, freshSession, reply, result, user } from "./fixtures"
 
 const WINDOW = 100_000
@@ -31,7 +31,7 @@ describe("what is sent always fits", () => {
       messages.push(user(`task ${n}`), call(`a${n}`), result(`a${n}`, next()), reply(`answer ${n}`))
       const live = [...messages, user(`task ${n + 1}`), call(`z${n}`), result(`z${n}`, next())]
       const thread = threadOf(sessionId, live)
-      const state = loadState(thread)
+      const state = readState(thread)
       const recalls = { ...state.recalls }
       for (const m of live) if (isPrompt(m)) recalls[messageFingerprint(m)] ??= recallOf(15_000)
       saveState(thread, { ...state, recalls })

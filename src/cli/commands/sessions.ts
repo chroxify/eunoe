@@ -1,28 +1,16 @@
 import { spawnSync } from "node:child_process"
-import { browse, filterCandidates } from "../browse"
-import { ASK_INDENT, ASK_MAX_WIDTH, ASK_MIN_WIDTH, PAGER, SESSION_ACTIONS, UNTITLED } from "../constants"
-import { input, interactive, select } from "../prompt"
-import type { SessionCandidate } from "../session-source"
 import { askOf, candidatesHere, peekText, shortId, titleOf, tokensOf } from "../sessions"
+import { browse, filterCandidates } from "../sessions/browse"
+import { UNTITLED } from "../sessions/constants"
+import type { SessionCandidate } from "../sessions/types"
+import { input, interactive, select } from "../terminal/prompt"
+import { ago, c, fail, line, note, wrap } from "../terminal/ui"
 import type { Command } from "../types"
-import { ago, c, fail, line, note } from "../ui"
+import { ASK_INDENT, ASK_MAX_WIDTH, ASK_MIN_WIDTH, PAGER, SESSION_ACTIONS } from "./constants"
 import { handOff } from "./continue"
 import { loadedLine, writeLoaded } from "./load"
 
 const askWidth = () => Math.max(ASK_MIN_WIDTH, Math.min(ASK_MAX_WIDTH, (process.stdout.columns ?? ASK_MAX_WIDTH + ASK_INDENT) - ASK_INDENT - 12))
-
-function wrap(text: string, width: number): string[] {
-  const out: string[] = []
-  let current = ""
-  for (const word of text.split(" ")) {
-    if (current && current.length + 1 + word.length > width) {
-      out.push(current)
-      current = word
-    } else current = current ? `${current} ${word}` : word
-  }
-  if (current) out.push(current)
-  return out
-}
 
 function ask(label: string, text: string | undefined) {
   const [first = "", ...rest] = wrap(askOf(text), askWidth())
@@ -44,7 +32,7 @@ export function listSessions(words: string, candidates: SessionCandidate[]) {
   line(`  ${c.dim(words ? `Earlier sessions here, closest to "${words}" first` : "Earlier sessions here, newest first")}`)
   line()
   for (const cand of order) show(cand)
-  if (!order.length) line(`  ${c.dim(`Nothing matches "${words}".`)}`)
+  if (order.length === 0) line(`  ${c.dim(`Nothing matches "${words}".`)}`)
 }
 
 async function act(cand: SessionCandidate): Promise<boolean> {
@@ -54,7 +42,10 @@ async function act(cand: SessionCandidate): Promise<boolean> {
     load: ["Load", "write the whole record to a file"],
     show: ["Show", `read it in ${PAGER}`],
   }
-  const action = await select(`${shortId(cand.id)}  ${titleOf(cand)}`, SESSION_ACTIONS.map((value) => ({ value, label: labels[value][0], hint: labels[value][1] })))
+  const action = await select(
+    `${shortId(cand.id)}  ${titleOf(cand)}`,
+    SESSION_ACTIONS.map((value) => ({ value, label: labels[value][0], hint: labels[value][1] })),
+  )
   if (action === "continue") handOff(cand.id)
   else if (action === "load") line(loadedLine(cand, writeLoaded(cand)))
   else if (action === "peek") {
@@ -84,9 +75,12 @@ export const sessions: Command = {
   ],
   options: [["--list", "Print the sessions instead of browsing them"]],
   async run(args) {
-    const words = args.filter((a) => !a.startsWith("-")).join(" ").trim()
+    const words = args
+      .filter((a) => !a.startsWith("-"))
+      .join(" ")
+      .trim()
     const candidates = candidatesHere()
-    if (!candidates.length) fail("No earlier sessions in this directory.")
+    if (candidates.length === 0) fail("No earlier sessions in this directory.")
     if (args.includes("--list") || !interactive) return listSessions(words, candidates)
     let query = words
     while (true) {

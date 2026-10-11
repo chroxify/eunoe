@@ -17,11 +17,11 @@ function modelId(model: unknown) {
   return String(model ?? "").replace(/\[[^\]]*\]$/, "")
 }
 
-export async function resolveWindow(model: unknown, requestHeaders: Headers, upstream: string): Promise<number | null> {
+export function resolveWindow(model: unknown, requestHeaders: Headers, upstream: string): Promise<number | null> {
   const id = modelId(model)
-  if (!id) return null
+  if (!id) return Promise.resolve(null)
   const known = windows.get(id)
-  if (known) return known
+  if (known) return Promise.resolve(known)
   let lookup = lookups.get(id)
   if (!lookup) {
     const headers = new Headers()
@@ -33,7 +33,7 @@ export async function resolveWindow(model: unknown, requestHeaders: Headers, ups
     lookup = fetch(`${upstream}/v1/models/${encodeURIComponent(id)}`, { headers, signal: AbortSignal.timeout(MODEL_LOOKUP_TIMEOUT_MS) })
       .then(async (response) => {
         if (!response.ok) return null
-        const info = await response.json() as { max_input_tokens?: number }
+        const info = (await response.json()) as { max_input_tokens?: number }
         if (typeof info.max_input_tokens !== "number" || info.max_input_tokens <= 0) return null
         windows.set(id, info.max_input_tokens)
         mkdirSync(EUNOE_DIR, { recursive: true })

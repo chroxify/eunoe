@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { editSettings, proxyUrl, withCompactionOwner, withEunoe, withoutEunoe } from "../src/cli/claude-settings"
-import { BLOCKING_LIMIT_ENV, BLOCKING_LIMIT_OFF } from "../src/cli/constants"
+import { editSettings, proxyUrl, withCompactionOwner, withEunoe, withoutEunoe } from "../src/cli/proxy/claude-settings"
+import { BLOCKING_LIMIT_ENV, BLOCKING_LIMIT_OFF } from "../src/cli/proxy/constants"
 
 describe("Claude settings edits", () => {
   test("install routes through eunoe and hands compaction to it, keeping everything else", () => {
@@ -50,7 +50,7 @@ describe("Claude settings edits", () => {
 
 describe("terminal output", () => {
   test("suggests the closest command for a typo, and nothing for nonsense", async () => {
-    const { closest } = await import("../src/cli/ui")
+    const { closest } = await import("../src/cli/terminal/ui")
     const commands = ["install", "uninstall", "stop", "mode", "status", "serve"]
     expect(closest("instal", commands)).toBe("install")
     expect(closest("stauts", commands)).toBe("status")
@@ -58,7 +58,7 @@ describe("terminal output", () => {
   })
 
   test("formats token counts and times for people", async () => {
-    const { ago, tokens } = await import("../src/cli/ui")
+    const { ago, tokens } = await import("../src/cli/terminal/ui")
     expect([tokens(950), tokens(1_234), tokens(48_000), tokens(1_250_000), tokens(31_000_000), tokens(1_520_000_000), tokens(999_950), tokens(2_400_000_000_000)]).toEqual(["950", "1.2k", "48k", "1.3M", "31M", "1.5B", "1.0M", "2.4T"])
     expect(ago(new Date(Date.now() - 2 * 3_600_000).toISOString())).toBe("2h ago")
   })
@@ -66,7 +66,7 @@ describe("terminal output", () => {
 
 describe("logo", () => {
   test("pixel rows are even in count, equal in width and only use known colours", async () => {
-    const { LOGO_KEYS, LOGO_PALETTE, LOGO_PIXELS } = await import("../src/cli/logo/pixels")
+    const { LOGO_KEYS, LOGO_PALETTE, LOGO_PIXELS } = await import("../src/cli/logo/constants")
     expect(LOGO_PIXELS.length % 4).toBe(0)
     expect(new Set(LOGO_PIXELS.map((row) => row.length)).size).toBe(1)
     expect(LOGO_KEYS.length).toBe(LOGO_PALETTE.length)

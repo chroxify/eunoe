@@ -1,6 +1,5 @@
-import { HALF_BLOCKS, LOGO_MISMATCH, OCTANT_TERMINALS, OCTANTS, TRANSPARENT_PIXEL } from "../constants"
-import { trueColor, useColor } from "../ui"
-import { LOGO_KEYS, LOGO_PALETTE, LOGO_PIXELS } from "./pixels"
+import { trueColor, useColor } from "../terminal/ui"
+import { HALF_BLOCKS, LOGO_KEYS, LOGO_MISMATCH, LOGO_PALETTE, LOGO_PIXELS, OCTANT_TERMINALS, OCTANTS, TRANSPARENT_PIXEL } from "./constants"
 
 type Rgb = [number, number, number]
 type Pixel = Rgb | null
@@ -65,16 +64,14 @@ function region(x: number, y: number, width: number, height: number): Pixel[] {
   return block
 }
 
-export function logoLines(): string[] {
+function logoLines(): string[] {
   if (!useColor) return []
   const octants = supportsOctants()
   const lines: string[] = []
   for (let y = 0; y < LOGO_PIXELS.length; y += 4) {
     let row = ""
     for (let x = 0; x < LOGO_PIXELS[0].length; x += 2) {
-      row += octants
-        ? cell(region(x, y, 2, 4), OCTANTS)
-        : cell([dominant(region(x, y, 2, 2)), dominant(region(x, y + 2, 2, 2))], [...HALF_BLOCKS])
+      row += octants ? cell(region(x, y, 2, 4), OCTANTS) : cell([dominant(region(x, y, 2, 2)), dominant(region(x, y + 2, 2, 2))], [...HALF_BLOCKS])
     }
     lines.push(row)
   }
@@ -83,5 +80,5 @@ export function logoLines(): string[] {
 
 export function withLogo(text: string[]): string[] {
   const logo = logoLines()
-  return [...logo.map((row) => `  ${row}`), ...(logo.length ? [""] : []), ...text.map((entry) => `  ${entry}`)]
+  return [...logo.map((row) => `  ${row}`), ...(logo.length > 0 ? [""] : []), ...text.map((entry) => `  ${entry}`)]
 }

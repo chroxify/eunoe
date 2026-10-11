@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 import { rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
-import type { RecallChunk, RecallPick } from "../../src/context/types"
-import { Tally, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
+import type { RecallChunk, RecallPick } from "../../src/context/recall/types"
 import { COMPONENTS, TOOL_FACTS } from "../lib/constants"
+import { keyTokens, mentions, plantedSessions, realPoints, Tally } from "../lib/data"
 import { NARRATIVE_OPTS, RERANK_CACHE_FILE, RERANK_CANDIDATES, RERANK_MODEL, RERANK_PICK } from "./constants"
 
 const API_KEY = readFileSync(path.join(homedir(), ".config", "eunoe-bench", "api-key"), "utf8").trim()
@@ -28,7 +28,10 @@ async function rerank(question: string, chunks: RecallChunk[], candidates: numbe
   calls += 1
   inputTokens += json.usage?.input_tokens ?? 0
   const text: string = json.content?.[0]?.text ?? "[]"
-  const picked = (JSON.parse(text.match(/\[[^\]]*\]/)?.[0] ?? "[]") as number[]).filter((n) => Number.isInteger(n) && n >= 0 && n < candidates.length).slice(0, RERANK_PICK).map((n) => candidates[n])
+  const picked = (JSON.parse(text.match(/\[[^\]]*\]/)?.[0] ?? "[]") as number[])
+    .filter((n) => Number.isInteger(n) && n >= 0 && n < candidates.length)
+    .slice(0, RERANK_PICK)
+    .map((n) => candidates[n])
   cache[key] = picked
   writeFileSync(RERANK_CACHE_FILE, JSON.stringify(cache))
   return picked
@@ -43,7 +46,9 @@ for (const session of plantedSessions(split)) {
   for (const fact of session.facts) {
     if (!TOOL_FACTS.has(fact.type)) continue
     const q = terms(fact.question)
-    const candidates = rank(q, chunks, 1).slice(0, RERANK_CANDIDATES).map((r) => r.index)
+    const candidates = rank(q, chunks, 1)
+      .slice(0, RERANK_CANDIDATES)
+      .map((r) => r.index)
     const inCandidates = candidates.some((i) => chunks[i].lines.join("\n").includes(fact.answer))
     chunkTally.add("planted: answer within BM25 top-30", inCandidates)
     const picked = await rerank(fact.question, chunks, candidates)
@@ -52,7 +57,10 @@ for (const session of plantedSessions(split)) {
     const hit = injected.includes(fact.answer)
     tally.add(fact.type, hit)
     tally.add("all", hit)
-    chunkTally.add("planted: picked chunk holds answer", picked.some((i) => chunks[i].lines.join("\n").includes(fact.answer)))
+    chunkTally.add(
+      "planted: picked chunk holds answer",
+      picked.some((i) => chunks[i].lines.join("\n").includes(fact.answer)),
+    )
   }
   console.error(`${session.id} done (${calls} calls, ${Math.round(inputTokens / 1000)}k input tokens)`)
 }
@@ -64,8 +72,13 @@ for (const point of realPoints()) {
     const tokens = keyTokens(q.answer)
     if (!chunks.some((c) => mentions(c.lines.join("\n"), tokens))) continue
     const qt = terms(q.question)
-    const candidates = rank(qt, chunks, 1).slice(0, RERANK_CANDIDATES).map((r) => r.index)
-    chunkTally.add("real: answer within BM25 top-30", candidates.some((i) => mentions(chunks[i].lines.join("\n"), tokens)))
+    const candidates = rank(qt, chunks, 1)
+      .slice(0, RERANK_CANDIDATES)
+      .map((r) => r.index)
+    chunkTally.add(
+      "real: answer within BM25 top-30",
+      candidates.some((i) => mentions(chunks[i].lines.join("\n"), tokens)),
+    )
     const picked = await rerank(q.question, chunks, candidates)
     const picks: RecallPick[] = picked.map((index) => ({ index, query: new Set(qt) }))
     const injected = renderRecall(q.question, chunks, picks, { maxChars: 12_000, maxCharsMulti: 24_000, salientExcerpt: true }) ?? ""
@@ -83,5 +96,5 @@ lines.push(`Real: | ${["tool_evidence", "recent", "mid_history", "decision", "in
 for (const k of chunkTally.keys()) lines.push(`${k}: ${chunkTally.get(k)} (${chunkTally.raw(k).hits}/${chunkTally.raw(k).total})`)
 lines.push(`Model calls: ${calls}, input tokens: ${inputTokens}`)
 mkdirSync(COMPONENTS, { recursive: true })
-writeFileSync(path.join(COMPONENTS, `rerank.${split}.md`), lines.join("\n") + "\n")
+writeFileSync(path.join(COMPONENTS, `rerank.${split}.md`), `${lines.join("\n")}\n`)
 console.log(lines.join("\n"))

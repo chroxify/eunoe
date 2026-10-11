@@ -4,7 +4,13 @@ import path from "node:path"
 
 export const OUT = path.join(import.meta.dir, "..", "out")
 export const CONFIG_DIR = process.env.BENCH_CLAUDE_CONFIG_DIR ?? path.join(homedir(), ".claude")
-export const ALL_CONFIG_DIRS = [...new Set([CONFIG_DIR, path.join(homedir(), ".claude"), ...(existsSync(path.join(homedir(), ".claude-swap-backup", "sessions")) ? readdirSync(path.join(homedir(), ".claude-swap-backup", "sessions")).map((d) => path.join(homedir(), ".claude-swap-backup", "sessions", d)) : [])])]
+export const ALL_CONFIG_DIRS = [
+  ...new Set([
+    CONFIG_DIR,
+    path.join(homedir(), ".claude"),
+    ...(existsSync(path.join(homedir(), ".claude-swap-backup", "sessions")) ? readdirSync(path.join(homedir(), ".claude-swap-backup", "sessions")).map((d) => path.join(homedir(), ".claude-swap-backup", "sessions", d)) : []),
+  ]),
+]
 
 export const PLANTED_OUT = path.join(import.meta.dir, "..", "out", "planted")
 export const COMPONENTS = path.join(import.meta.dir, "..", "out", "evals")

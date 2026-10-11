@@ -1,19 +1,15 @@
-import { claudeConfigDirs, loadConfig } from "../../config"
-import { editSettings, withoutEunoe } from "../claude-settings"
-import * as launchd from "../launchd"
+import { claudeConfigDirs, readConfig } from "../../config"
+import { editSettings, withoutEunoe } from "../proxy/claude-settings"
+import * as launchd from "../proxy/launchd"
+import { c, line, listFiles, note, ok, warn } from "../terminal/ui"
 import type { Command } from "../types"
-import { c, line, listFiles, note, ok, warn } from "../ui"
 
 export const uninstall: Command = {
   summary: "Stop eunoe and remove the background proxy",
   usage: "eunoe uninstall",
-  details: [
-    "Everything `stop` does, then shuts the proxy down and removes its background service.",
-    "Sessions still running through eunoe lose their connection, so restart them first.",
-    "Your config and transcripts in ~/.eunoe are kept.",
-  ],
+  details: ["Everything `stop` does, then shuts the proxy down and removes its background service.", "Sessions still running through eunoe lose their connection, so restart them first.", "Your config and transcripts in ~/.eunoe are kept."],
   run() {
-    const config = loadConfig()
+    const config = readConfig()
     const touched = editSettings(claudeConfigDirs(config), (settings) => withoutEunoe(settings, config.port))
     line()
     ok("Claude Code no longer routed through eunoe")

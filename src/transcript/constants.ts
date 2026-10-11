@@ -13,3 +13,9 @@ export const TURN_COUNT_FILE = ".turns"
 export const INDEX_FILE = "index.md"
 export const QMD_DIR = ".qmd"
 
+export const SUBAGENTS_DIR = "subagents"
+export const SUBAGENT_FILE_PREFIX = "agent-"
+export const SUBAGENT_INLINE_ID = "sidechain"
+export const SUBAGENT_DESCRIPTION_CHARS = 80
+export const SUBAGENT_LABEL = "subagent"
+export const AGENT_TOOL_NAMES = ["Agent", "Task"]

@@ -8,7 +8,7 @@ Bun.serve({
   port,
   async fetch(req) {
     const url = new URL(req.url)
-    const raw = req.method === "POST" ? await req.text() : ""
+    const raw = await (req.method === "POST" ? req.text() : Promise.resolve(""))
     if (raw) {
       try {
         const b = JSON.parse(raw)
@@ -16,7 +16,10 @@ Bun.serve({
         const bash = (b.tools ?? []).find((t: any) => t.name === "Bash")
         const first = b.messages?.[0]
         const text = (m: any) => (typeof m?.content === "string" ? m.content : (m?.content ?? []).map((x: any) => x.text ?? `[${x.type}]`).join(" "))
-        appendFileSync(log, JSON.stringify({ ts: new Date().toISOString(), model: b.model, systemHead: sys.replace(/^x-anthropic-billing-header:[^\n]*\n/, "").slice(0, 90), systemChars: sys.length, tools: (b.tools ?? []).length, bashDescChars: bash ? JSON.stringify(bash).length : 0, messages: b.messages?.length ?? 0, firstMessage: text(first).slice(0, 100) }) + "\n")
+        appendFileSync(
+          log,
+          `${JSON.stringify({ ts: new Date().toISOString(), model: b.model, systemHead: sys.replace(/^x-anthropic-billing-header:[^\n]*\n/, "").slice(0, 90), systemChars: sys.length, tools: (b.tools ?? []).length, bashDescChars: bash ? JSON.stringify(bash).length : 0, messages: b.messages?.length ?? 0, firstMessage: text(first).slice(0, 100) })}\n`,
+        )
       } catch {}
     }
     const headers = new Headers(req.headers)

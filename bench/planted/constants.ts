@@ -21,9 +21,18 @@ export const CUT_SHARE = 0.95
 export const PROJECTS = path.join(homedir(), "Developer", "Projects")
 export const SUPERWALL = path.join(homedir(), "Developer", "Superwall")
 export const REPOS = [
-  path.join(PROJECTS, "kanna"), path.join(PROJECTS, "buzzkit"), path.join(PROJECTS, "cs"), path.join(PROJECTS, "feedbase"),
-  path.join(PROJECTS, "marcato"), path.join(PROJECTS, "outpost"), path.join(PROJECTS, "tripline"), path.join(PROJECTS, "madori"),
-  path.join(PROJECTS, "sen"), path.join(PROJECTS, "shinsa"), path.join(SUPERWALL, "pwn"), path.join(SUPERWALL, "ios"),
+  path.join(PROJECTS, "kanna"),
+  path.join(PROJECTS, "buzzkit"),
+  path.join(PROJECTS, "cs"),
+  path.join(PROJECTS, "feedbase"),
+  path.join(PROJECTS, "marcato"),
+  path.join(PROJECTS, "outpost"),
+  path.join(PROJECTS, "tripline"),
+  path.join(PROJECTS, "madori"),
+  path.join(PROJECTS, "sen"),
+  path.join(PROJECTS, "shinsa"),
+  path.join(SUPERWALL, "pwn"),
+  path.join(SUPERWALL, "ios"),
 ]
 export const STYLES = [
   "terse and lowercase, few words, occasional typos, no greetings",
@@ -41,7 +50,32 @@ export const DEPTH_BUCKETS: Array<[string, number, number]> = [
 ]
 
 export const SYLLABLES = ["ka", "ri", "mo", "tez", "vul", "dra", "pen", "sho", "gal", "nix", "oro", "bel", "quin", "zar", "lum", "fen", "tor", "wex", "yal", "cus"]
-export const CODENAMES = ["Heron", "Marten", "Osprey", "Tamarin", "Gecko", "Ibex", "Kestrel", "Lynx", "Narwhal", "Ocelot", "Pika", "Quokka", "Saiga", "Tapir", "Vicuna", "Wombat", "Yak", "Zorilla", "Caracal", "Dhole", "Eland", "Fossa", "Gharial", "Hoatzin"]
+export const CODENAMES = [
+  "Heron",
+  "Marten",
+  "Osprey",
+  "Tamarin",
+  "Gecko",
+  "Ibex",
+  "Kestrel",
+  "Lynx",
+  "Narwhal",
+  "Ocelot",
+  "Pika",
+  "Quokka",
+  "Saiga",
+  "Tapir",
+  "Vicuna",
+  "Wombat",
+  "Yak",
+  "Zorilla",
+  "Caracal",
+  "Dhole",
+  "Eland",
+  "Fossa",
+  "Gharial",
+  "Hoatzin",
+]
 export const B32 = "abcdefghjkmnpqrstuvwxyz23456789"
 
 export const VALUE_KINDS: Array<(v: Draw) => { label: string; value: string }> = [
@@ -78,13 +112,31 @@ export const SUPERSEDED_AFTER = /^\W*(?:\w+\W+){0,3}?(?:is|was|has been|got)?\W*
 export const SMOKE_CWD = path.join(import.meta.dir, "..", "..")
 export const SMOKE_TURNS: Turn[] = [
   { turn: 1, user: "what does the proxy do with count_tokens requests", steps: [{ tool: "read", path: "src/proxy/server.ts", offset: 1, limit: 60 }], reply: "count_tokens requests are rewritten like messages but never trigger a cut." },
-  { turn: 2, user: "deploy the docs site to staging", steps: [{ tool: "run", command: "bun run deploy:docs --env staging", output: "Building docs...\nUploaded 41 files\nDeployment ID: dpl_k7mq2xv9rt\nLive at https://docs-staging.internal" }], reply: "The docs site is deployed to staging." },
+  {
+    turn: 2,
+    user: "deploy the docs site to staging",
+    steps: [{ tool: "run", command: "bun run deploy:docs --env staging", output: "Building docs...\nUploaded 41 files\nDeployment ID: dpl_k7mq2xv9rt\nLive at https://docs-staging.internal" }],
+    reply: "The docs site is deployed to staging.",
+  },
   { turn: 3, user: "from now on every branch must start with the prefix qor/ ok", steps: [{ tool: "git", args: "log --oneline -5" }], reply: "Understood." },
-  { turn: 4, user: "run the context tests", steps: [{ tool: "run", command: "bun test test/context.test.ts", output: "running 18 tests\nFAIL test/context.test.ts\n  E_TORNIX_4410: fixture missing\n1 failed, 17 passed", failed: true }, { tool: "read", path: "test/fixtures.ts", limit: 40 }], reply: "One test failed on a missing fixture; I restored it and the suite passes." },
+  {
+    turn: 4,
+    user: "run the context tests",
+    steps: [
+      { tool: "run", command: "bun test test/context.test.ts", output: "running 18 tests\nFAIL test/context.test.ts\n  E_TORNIX_4410: fixture missing\n1 failed, 17 passed", failed: true },
+      { tool: "read", path: "test/fixtures.ts", limit: 40 },
+    ],
+    reply: "One test failed on a missing fixture; I restored it and the suite passes.",
+  },
   { turn: 5, user: "ok summarize where we are", steps: [{ tool: "ls", path: "src" }], reply: "Docs are on staging, context tests pass, nothing else pending." },
 ]
 
-export const OUTLINE = (repo: Repo, files: string[], turns: number, style: string) => `You are planning a realistic, long working session between a developer and a coding agent (Claude Code) in the repository "${repo.name}". It runs ${turns} turns: each turn is one message from the developer and the agent's work on it.
+export const OUTLINE = (
+  repo: Repo,
+  files: string[],
+  turns: number,
+  style: string,
+) => `You are planning a realistic, long working session between a developer and a coding agent (Claude Code) in the repository "${repo.name}". It runs ${turns} turns: each turn is one message from the developer and the agent's work on it.
 
 Make it feel like a real day of work on THIS codebase: a few threads of feature work, a debugging detour or two, refactors, test runs, small chores, a release or deploy, questions about how something works. Threads continue across many turns and some get interrupted and resumed later. Topics should reference real files and areas from the list below.
 
@@ -132,15 +184,19 @@ Continuity: follow the topics, keep threads consistent, refer back naturally. Th
 Topics for these turns:
 ${o.topics.map((t, i) => `${o.from + i}. ${t}`).join("\n")}
 
-${o.recent.length ? `The previous turns, for continuity:\n${o.recent.map((t) => `[${t.turn}] USER: ${t.user.slice(0, 300)}\nAGENT: ${t.reply.slice(0, 300)}`).join("\n")}\n` : ""}
+${o.recent.length > 0 ? `The previous turns, for continuity:\n${o.recent.map((t) => `[${t.turn}] USER: ${t.user.slice(0, 300)}\nAGENT: ${t.reply.slice(0, 300)}`).join("\n")}\n` : ""}
 These exact requirements MUST hold (they are checked by code; a miss rejects the whole chunk). Each planted value lives only in its own turn: the work in other turns must not touch what would use it (if a rule is about how tests run, later turns don't run that test suite; if it's about branches, later turns don't create branches), so nothing ever repeats it.
-${o.rules.length ? o.rules.map((r) => `- ${r}`).join("\n") : "- (none in these turns)"}
-- These strings must not appear anywhere in these turns: ${o.forbidden.length ? o.forbidden.map((f) => `\`${f}\``).join(", ") : "(none)"}
+${o.rules.length > 0 ? o.rules.map((r) => `- ${r}`).join("\n") : "- (none in these turns)"}
+- These strings must not appear anywhere in these turns: ${o.forbidden.length > 0 ? o.forbidden.map((f) => `\`${f}\``).join(", ") : "(none)"}
 
-${o.questions.length ? `For each of these facts, also write the question a teammate would ask much later to check the agent still knows it. Phrase it in the story's own terms (what was being done, which command, which thread) so it has exactly one answer, WITHOUT revealing the answer, the turn number, or any of the values above.${o.questions.some((f) => f.implicit) ? ` For the ones marked IMPLICIT, also write "task": a natural request that can only be done right by applying the rule, without mentioning the rule (e.g. "spin up the dev server for me, what exact command will you run?").` : ""}
+${
+  o.questions.length > 0
+    ? `For each of these facts, also write the question a teammate would ask much later to check the agent still knows it. Phrase it in the story's own terms (what was being done, which command, which thread) so it has exactly one answer, WITHOUT revealing the answer, the turn number, or any of the values above.${o.questions.some((f) => f.implicit) ? ` For the ones marked IMPLICIT, also write "task": a natural request that can only be done right by applying the rule, without mentioning the rule (e.g. "spin up the dev server for me, what exact command will you run?").` : ""}
 ${o.questions.map((f) => `- ${f.id}${f.implicit ? " IMPLICIT" : ""}: ${f.label}${f.type === "revised" || f.type === "superseded" ? " (the current one)" : ""}`).join("\n")}
-` : ""}${o.feedback ? `\nYour previous attempt was rejected for these reasons; fix them:\n${o.feedback}\n` : ""}
-Return only JSON: {"turns":[{"turn":${o.from},"user":"...","steps":[...],"reply":"..."}, ...]${o.questions.length ? `,"facts":[{"id":"f01","question":"..."${o.questions.some((f) => f.implicit) ? `,"task":"..."` : ""}}]` : ""}}
+`
+    : ""
+}${o.feedback ? `\nYour previous attempt was rejected for these reasons; fix them:\n${o.feedback}\n` : ""}
+Return only JSON: {"turns":[{"turn":${o.from},"user":"...","steps":[...],"reply":"..."}, ...]${o.questions.length > 0 ? `,"facts":[{"id":"f01","question":"..."${o.questions.some((f) => f.implicit) ? `,"task":"..."` : ""}}]` : ""}}
 
 Files you can read (sample of the repository):
 ${o.files.join("\n")}`

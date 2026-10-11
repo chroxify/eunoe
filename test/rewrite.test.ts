@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test"
-import { SESSIONS_SECTION } from "../src/context/prompts"
+import { SESSIONS_SECTION } from "../src/context/constants"
+import { splitTurns, turnFingerprint } from "../src/context/fold/turns"
+import type { Body, Message } from "../src/context/types"
 import { messageFingerprint, rewrite, rewriteAsync } from "../src/proxy/rewrite"
 import { saveState } from "../src/proxy/state"
-import { splitTurns, turnFingerprint } from "../src/context/turns"
-import type { Body } from "../src/context/types"
-import { call, config, freshSession, reply, result, session, transcript, user } from "./fixtures"
+import { call, config, freshSession, reply, result, session, transcript, turn, user } from "./fixtures"
 
 const TOOLS = [{ name: "Bash" }]
 const body = (messages: Body["messages"]): Body => ({ system: "s", tools: TOOLS, messages })
-const run = (b: Body, patch: Parameters<typeof config>[0] = {}, window: number | null = 100_000, sessionId = freshSession()) =>
-  rewrite({ body: b, sessionId, config: config(patch), transcript, window, mayCompact: true })
+const run = (b: Body, patch: Parameters<typeof config>[0] = {}, window: number | null = 100_000, sessionId = freshSession()) => rewrite({ body: b, sessionId, config: config(patch), transcript, window, mayCompact: true })
 const text = (b: Body) => JSON.stringify(b.messages)
 
 describe("passthrough", () => {
@@ -96,7 +95,13 @@ describe("compaction under pressure", () => {
     for (let i = 1; i <= 6; i += 1) messages.push(user(`task ${i}`), reply(`answer ${i}`))
     messages.push(user("the big one"))
     for (let i = 0; i < 30; i += 1) {
-      messages.push({ role: "assistant", content: [{ type: "text", text: `step c${i}` }, { type: "tool_use", id: `c${i}`, name: "Write", input: { content: "w".repeat(5_000) } }] })
+      messages.push({
+        role: "assistant",
+        content: [
+          { type: "text", text: `step c${i}` },
+          { type: "tool_use", id: `c${i}`, name: "Write", input: { content: "w".repeat(5_000) } },
+        ],
+      })
       messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: `c${i}`, content: "o".repeat(20_000) }] })
     }
     const out = run(body(messages), { compactAt: 0.5 }, 250_000)
@@ -231,15 +236,42 @@ describe("logging a fold", () => {
     process.env.TYPESAFE_API_KEY = "key"
     try {
       const id = freshSession()
-      const out = await rewriteAsync({ body: body(session(20, 3_000)), sessionId: id, config: config({ compactAt: 0.1, rerank: "jev-preview", eval: { rerank: { model: "jev-preview", endpoint: `http://127.0.0.1:${server.port}/systemone` } } }), transcript, window: 100_000, mayCompact: true })
+      const out = await rewriteAsync({
+        body: body(session(20, 3_000)),
+        sessionId: id,
+        config: config({ compactAt: 0.1, rerank: "jev-preview", eval: { rerank: { model: "jev-preview", endpoint: `http://127.0.0.1:${server.port}/systemone` } } }),
+        transcript,
+        window: 100_000,
+        mayCompact: true,
+      })
       expect(out.note.compacted).toBe(true)
       expect(out.note.actions).toContain("cut")
-      const again = await rewriteAsync({ body: body(session(20, 3_000)), sessionId: id, config: config({ compactAt: 0.1, rerank: "jev-preview", eval: { rerank: { model: "jev-preview", endpoint: `http://127.0.0.1:${server.port}/systemone` } } }), transcript, window: 100_000, mayCompact: true })
+      const again = await rewriteAsync({
+        body: body(session(20, 3_000)),
+        sessionId: id,
+        config: config({ compactAt: 0.1, rerank: "jev-preview", eval: { rerank: { model: "jev-preview", endpoint: `http://127.0.0.1:${server.port}/systemone` } } }),
+        transcript,
+        window: 100_000,
+        mayCompact: true,
+      })
       expect(again.note.compacted).toBe(false)
     } finally {
       if (had === undefined) delete process.env.TYPESAFE_API_KEY
       else process.env.TYPESAFE_API_KEY = had
       server.stop(true)
     }
+  })
+})
+
+describe("turn cap", () => {
+  const giant = (n: number, chars: number): Message[] => [user(`big ${n}`), call(`g${n}`), result(`g${n}`, chars), reply(`done ${n}`)]
+  test("a kept turn over the cap is folded at once, smaller kept turns and the live turn stay whole", () => {
+    const messages: Message[] = [user("first"), reply("ok"), ...giant(1, 500_000), ...turn(2, { output: 20 }), ...giant(3, 500_000), user("the live one"), call("z"), result("z", 500_000)]
+    const sent = text(run(body(messages), { mode: "default", turnCap: 50_000 }, 10_000_000).body)
+    expect(sent).not.toContain(`${"x".repeat(500_000)}"}],"role":"user"},{"role":"assistant","content":[{"type":"text","text":"done 1"`)
+    expect(sent.match(/x{500000}/g)?.length).toBe(1)
+    expect(sent).toContain("done 1")
+    expect(sent).toContain("done 3")
+    expect(text(run(body(messages), { mode: "default", turnCap: "off" }, 10_000_000).body).match(/x{500000}/g)?.length).toBe(3)
   })
 })

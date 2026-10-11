@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { rank, recallChunks, recallFor, terms } from "../../src/context/recall"
-import { Tally, depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
 import { COMPONENTS, TOOL_FACTS } from "../lib/constants"
+import { depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints, Tally } from "../lib/data"
 import { DEPTH_KEYS, PLANTED_KEYS, REAL_KEYS, RECALL_VARIANTS } from "./constants"
 
 const split = process.argv[2]
@@ -64,7 +64,10 @@ for (const point of real) {
   }
 }
 
-const med = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0 }
+const med = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b)
+  return s.length > 0 ? s[Math.floor(s.length / 2)] : 0
+}
 const lines: string[] = []
 lines.push(`# Recall retrieval${split ? ` (${split} split)` : ""}`, "")
 lines.push(`Planted tool-output facts: ${asked}; present in some chunk: ${retrievable} (${pct(retrievable, asked)}). Hit = the value is inside the injected <recalled-context> for the fact's own question. Sessions: ${sessions.length}.`, "")
@@ -80,6 +83,6 @@ lines.push(`| variant | ${REAL_KEYS.join(" | ")} |`, `|${"---|".repeat(REAL_KEYS
 for (const name of names) lines.push(`| ${name} | ${REAL_KEYS.map((k) => realTally.get(name)!.get(k)).join(" | ")} |`)
 mkdirSync(COMPONENTS, { recursive: true })
 const out = path.join(COMPONENTS, `recall${split ? `.${split}` : ""}.md`)
-writeFileSync(out, lines.join("\n") + "\n")
+writeFileSync(out, `${lines.join("\n")}\n`)
 console.log(lines.join("\n"))
 console.log(`\nwritten ${out}`)

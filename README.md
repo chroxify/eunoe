@@ -273,7 +273,14 @@ index.md        one line per turn: what you asked and how the turn ended
 turn-0001.md    ## User            your message
 turn-0002.md    ### [tool 3/12]    every tool call, with its full output below it
 ...             ## Final reply     the agent's reply
+turn-0002-subagent-1.md            the whole run of a subagent launched in that turn
 ```
+
+A subagent's run is its own file, indexed under the turn that launched it
+and linked from the Agent call; the turn itself only has the subagent's
+report. What the subagent saw and ran is also part of recall, labelled
+`subagent "…"`, so the agent gets a value only its subagent printed without
+having to look.
 
 Markdown is far easier for an agent to grep and read than Claude Code's raw
 JSONL, and the folder is rebuilt as the session grows. The agent is given the
@@ -327,6 +334,7 @@ eunoe settings               # pick a setting and change it
 eunoe settings list          # show them all
 eunoe settings set keep 5    # change one directly
 eunoe status                 # what's running, every session, context and tokens saved
+eunoe replay                 # replay your whole Claude Code history through eunoe, offline, and see what it saves
 eunoe uninstall              # stop and remove the background proxy
 ```
 
@@ -374,6 +382,7 @@ session's next request.
 |---|---|---|
 | `keep` | `3` | turns kept whole at the end |
 | `budget` | `100000` | tokens of older detail that trigger a fold |
+| `turnCap` | `100000` | a kept turn larger than this is folded at once, the live turn excepted; `off` to disable |
 | `compactAt` | `0.9` | share of the context window that triggers the full cut |
 | `keepTurns` | `all` | folded turns kept after a full cut |
 | `search` | `markdown` | transcript form for the agent: `markdown`, `xml`, `jsonl` or `qmd` (semantic, via [qmd](https://github.com/tobi/qmd)) |

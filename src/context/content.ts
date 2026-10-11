@@ -10,7 +10,10 @@ export function blocks(message: Message): Block[] {
 }
 
 export function textOf(message: Message): string {
-  return blocks(message).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n")
+  return blocks(message)
+    .filter((b) => b.type === "text")
+    .map((b) => String(b.text ?? ""))
+    .join("\n")
 }
 
 export function withoutCacheControl(block: Block): Block {
@@ -52,5 +55,10 @@ export function describeToolCall(block: Block): string {
 }
 
 export function resultText(block: Block): string {
-  return typeof block.content === "string" ? block.content : contentBlocks(block.content).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n")
+  return typeof block.content === "string"
+    ? block.content
+    : contentBlocks(block.content)
+        .filter((b) => b.type === "text")
+        .map((b) => String(b.text ?? ""))
+        .join("\n")
 }

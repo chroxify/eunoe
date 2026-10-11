@@ -3,6 +3,7 @@ import { continueSession } from "./continue"
 import { load } from "./load"
 import { mode } from "./mode"
 import { peek } from "./peek"
+import { replay } from "./replay"
 import { serve } from "./serve"
 import { sessions } from "./sessions"
 import { settings } from "./settings"
@@ -19,6 +20,7 @@ export const commands: Record<string, Command> = {
   mode,
   settings,
   status,
+  replay,
   sessions,
   peek,
   load,

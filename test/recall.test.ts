@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { salientLines, turnEvidence } from "../src/context/evidence"
+import { salientLines, turnEvidence } from "../src/context/fold/evidence"
+import { trimMessages } from "../src/context/fold/strategies"
 import { recallChunks, recallFor, withRecall } from "../src/context/recall"
-import { trimMessages } from "../src/context/strategies"
 import type { Message } from "../src/context/types"
 import { rewrite } from "../src/proxy/rewrite"
 import { config, freshSession, reply, user } from "./fixtures"
@@ -20,7 +20,13 @@ describe("tool evidence", () => {
   })
 
   test("a reduced turn carries its evidence; file reads are left to be read again", () => {
-    const turn = [user("deploy it"), ...run("t1", "bun run deploy:staging", DEPLOY), { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/a.ts" } }] }, { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "1\tconst x = 0x8f3a9c2d11" }] }, reply("deployed")]
+    const turn = [
+      user("deploy it"),
+      ...run("t1", "bun run deploy:staging", DEPLOY),
+      { role: "assistant", content: [{ type: "tool_use", id: "t2", name: "Read", input: { file_path: "/a.ts" } }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t2", content: "1\tconst x = 0x8f3a9c2d11" }] },
+      reply("deployed"),
+    ]
     const evidence = turnEvidence(turn as Message[])!
     expect(evidence).toContain("dpl_qgthe6u4p7")
     expect(evidence).not.toContain("0x8f3a9c2d11")
@@ -32,8 +38,12 @@ describe("tool evidence", () => {
 
 describe("recall", () => {
   const history: Message[] = [
-    user("deploy billing to staging"), ...run("d1", "bun run deploy:staging", DEPLOY), reply("Deployed."),
-    user("run the lease tests"), ...run("t1", "bun test src/lease.test.ts", TESTS), reply("One failure, fixed."),
+    user("deploy billing to staging"),
+    ...run("d1", "bun run deploy:staging", DEPLOY),
+    reply("Deployed."),
+    user("run the lease tests"),
+    ...run("t1", "bun test src/lease.test.ts", TESTS),
+    reply("One failure, fixed."),
     user("what deployment id did the staging deploy print?"),
   ]
 
@@ -45,7 +55,15 @@ describe("recall", () => {
   })
 
   test("skips output that is still in context", () => {
-    expect(recallChunks(history, new Map([["d1", DEPLOY], ["t1", TESTS]])).filter((c) => c.call !== "agent")).toEqual([])
+    expect(
+      recallChunks(
+        history,
+        new Map([
+          ["d1", DEPLOY],
+          ["t1", TESTS],
+        ]),
+      ).filter((c) => c.call !== "agent"),
+    ).toEqual([])
   })
 
   test("asks nothing of a prompt that matches nothing", () => {

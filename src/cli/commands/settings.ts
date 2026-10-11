@@ -1,33 +1,42 @@
-import { loadConfig, overrides, parseTunable, saveConfig } from "../../config"
+import { overrides, parseTunable, readConfig, saveConfig } from "../../config"
 import { DEFAULTS, TUNABLES } from "../../config/constants"
 import type { Tunable } from "../../config/types"
-import { SETTING_RESET, TUNABLE_DESCRIPTIONS, TUNABLE_HINTS } from "../constants"
-import { input, interactive, select } from "../prompt"
 import { sessionArgs, shortId } from "../sessions"
+import { input, interactive, select } from "../terminal/prompt"
+import { c, fail, line, ok, rows } from "../terminal/ui"
 import type { Command } from "../types"
-import { c, fail, line, ok, rows } from "../ui"
+import { SETTING_RESET, TUNABLE_DESCRIPTIONS, TUNABLE_HINTS } from "./constants"
 
 function listSettings() {
-  const config = loadConfig()
+  const config = readConfig()
   line()
   const width = Math.max(...TUNABLES.map((name) => String(config[name]).length))
-  rows(TUNABLES.map((name) => {
-    const value = String(config[name])
-    const changed = config[name] !== DEFAULTS[name]
-    return [name, `${c.bold(value.padEnd(width))}  ${c.dim(TUNABLE_DESCRIPTIONS[name])}${changed ? c.dim(`  (default ${DEFAULTS[name]})`) : ""}`]
-  }))
-  const own = Object.entries(config.sessions).map(([id, settings]) => [id, overrides(settings)] as const).filter(([, values]) => Object.keys(values).length)
-  if (own.length) {
+  rows(
+    TUNABLES.map((name) => {
+      const value = String(config[name])
+      const changed = config[name] !== DEFAULTS[name]
+      return [name, `${c.bold(value.padEnd(width))}  ${c.dim(TUNABLE_DESCRIPTIONS[name])}${changed ? c.dim(`  (default ${DEFAULTS[name]})`) : ""}`]
+    }),
+  )
+  const own = Object.entries(config.sessions)
+    .map(([id, session]) => [id, overrides(session)] as const)
+    .filter(([, values]) => Object.keys(values).length)
+  if (own.length > 0) {
     line()
-    for (const [id, values] of own) line(`  ${c.cyan(shortId(id))}  ${Object.entries(values).map(([name, value]) => `${name} ${c.bold(String(value))}`).join(c.dim("  ·  "))}`)
+    for (const [id, values] of own)
+      line(
+        `  ${c.cyan(shortId(id))}  ${Object.entries(values)
+          .map(([name, value]) => `${name} ${c.bold(String(value))}`)
+          .join(c.dim("  ·  "))}`,
+      )
   }
   line()
 }
 
 function applySetting(name: Tunable, raw: string, ids: string[]) {
-  const config = loadConfig()
+  const config = readConfig()
   if (raw === SETTING_RESET) {
-    if (!ids.length) fail(`\`${SETTING_RESET}\` only applies with --session`, `eunoe settings set ${name} ${SETTING_RESET} --session <id>`)
+    if (ids.length === 0) fail(`\`${SETTING_RESET}\` only applies with --session`, `eunoe settings set ${name} ${SETTING_RESET} --session <id>`)
     const sessions = { ...config.sessions }
     for (const id of ids) {
       if (!sessions[id]) continue
@@ -40,7 +49,7 @@ function applySetting(name: Tunable, raw: string, ids: string[]) {
   }
   const value = parseTunable(name, raw)
   if (value === null) fail(`Not a valid ${name}: ${raw}`, `Expected ${TUNABLE_HINTS[name]}.`)
-  if (ids.length) {
+  if (ids.length > 0) {
     saveConfig({ sessions: { ...config.sessions, ...Object.fromEntries(ids.map((id) => [id, { ...config.sessions[id], [name]: value }])) } })
     ok(`${name} ${c.bold(String(value))} for ${ids.map(shortId).join(", ")}`)
     if (config.scope === "sessions" && ids.some((id) => !config.sessions[id])) line(`  ${c.dim("eunoe only manages sessions you started it for: eunoe start --session <id>")}`)
@@ -51,11 +60,14 @@ function applySetting(name: Tunable, raw: string, ids: string[]) {
 }
 
 async function pickSetting(ids: string[]) {
-  const config = loadConfig()
+  const config = readConfig()
   line()
-  const name = await select<Tunable>(ids.length ? `Setting for ${ids.map(shortId).join(", ")}` : "Setting", TUNABLES.map((value) => ({ value, hint: `${String(config[value]).padEnd(12)} ${TUNABLE_DESCRIPTIONS[value]}` })))
+  const name = await select<Tunable>(
+    ids.length > 0 ? `Setting for ${ids.map(shortId).join(", ")}` : "Setting",
+    TUNABLES.map((value) => ({ value, hint: `${String(config[value]).padEnd(12)} ${TUNABLE_DESCRIPTIONS[value]}` })),
+  )
   if (name === null) return
-  const current = ids.length === 1 ? config.sessions[ids[0]]?.[name] ?? config[name] : config[name]
+  const current = ids.length === 1 ? (config.sessions[ids[0]]?.[name] ?? config[name]) : config[name]
   const raw = await input(`${name}  ${c.dim(TUNABLE_HINTS[name])}`, `${current}  (current)`)
   if (raw === null || raw === "") return
   applySetting(name, raw, ids)

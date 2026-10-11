@@ -5,20 +5,10 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
-    "types": [
-      "bun-types"
-    ],
+    "types": ["bun-types"],
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": [
-    "src",
-    "test",
-    "bench"
-  ],
-  "exclude": [
-    "node_modules",
-    "bench/out",
-    "bench/tools/models"
-  ]
+  "include": ["src", "test", "bench", "scripts"],
+  "exclude": ["node_modules", "bench/out", "bench/tools/models"]
 }

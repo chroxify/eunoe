@@ -10,9 +10,14 @@ const run = (id: string, command: string, output: string): Message[] => [
 ]
 const DEPLOY = ["Uploading 12 files", "Deployment ID: dpl_qgthe6u4p7", "done"].join("\n")
 const history: Message[] = [
-  user("always use the yalsho/ branch prefix"), reply("Noted, yalsho/ it is."),
-  user("deploy staging"), ...run("t1", "bun run deploy:staging", DEPLOY), reply("Deployed to staging."),
-  user("run the tests"), ...run("t2", "bun test", "42 pass"), reply("All green."),
+  user("always use the yalsho/ branch prefix"),
+  reply("Noted, yalsho/ it is."),
+  user("deploy staging"),
+  ...run("t1", "bun run deploy:staging", DEPLOY),
+  reply("Deployed to staging."),
+  user("run the tests"),
+  ...run("t2", "bun test", "42 pass"),
+  reply("All green."),
 ]
 
 describe("fold", () => {

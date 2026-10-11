@@ -1,12 +1,13 @@
+import { shortHash } from "../context/content"
 import type { Body } from "../context/types"
 import { FINGERPRINT_LENGTH, SKILL_MARKER } from "./constants"
 import type { ContextFingerprint } from "./types"
 
-const hash = (value: unknown) => {
-  const hasher = new Bun.CryptoHasher("sha256")
-  hasher.update(JSON.stringify(value ?? null, (key, inner) => (key === "cache_control" ? undefined : inner)))
-  return hasher.digest("hex").slice(0, FINGERPRINT_LENGTH)
-}
+const hash = (value: unknown) =>
+  shortHash(
+    JSON.stringify(value ?? null, (key, inner) => (key === "cache_control" ? undefined : inner)),
+    FINGERPRINT_LENGTH,
+  )
 
 export function contextFingerprint(body: Body): ContextFingerprint {
   const skills = new Set<string>()

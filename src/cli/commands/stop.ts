@@ -1,8 +1,8 @@
-import { claudeConfigDirs, loadConfig, saveConfig } from "../../config"
-import { editSettings, withoutEunoe } from "../claude-settings"
+import { claudeConfigDirs, readConfig, saveConfig } from "../../config"
+import { editSettings, withoutEunoe } from "../proxy/claude-settings"
 import { sessionArgs, shortId } from "../sessions"
+import { line, listFiles, note, ok } from "../terminal/ui"
 import type { Command } from "../types"
-import { line, listFiles, note, ok } from "../ui"
 
 export const stop: Command = {
   summary: "Send new sessions straight to the API again",
@@ -16,9 +16,9 @@ export const stop: Command = {
   ],
   options: [["--session <id>", "Stop managing just this session (repeatable; a unique prefix is enough)"]],
   run(args) {
-    const config = loadConfig()
+    const config = readConfig()
     const ids = sessionArgs(args)
-    if (ids.length) {
+    if (ids.length > 0) {
       const sessions = { ...config.sessions }
       for (const id of ids) {
         if (config.scope === "all") sessions[id] = { ...sessions[id], mode: "off" }

@@ -21,8 +21,12 @@ export function extractJson(raw: string): any {
   for (const source of [raw, fenced?.[1]]) {
     const object = source && balancedObject(source)
     if (!object) continue
-    try { return JSON.parse(object) } catch {}
-    try { return JSON.parse(object.replace(/,\s*([\]}])/g, "$1")) } catch {}
+    try {
+      return JSON.parse(object)
+    } catch {}
+    try {
+      return JSON.parse(object.replace(/,\s*([\]}])/g, "$1"))
+    } catch {}
   }
   throw new Error("no JSON object found")
 }

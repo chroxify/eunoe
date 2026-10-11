@@ -1,19 +1,25 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { extractJson } from "../lib/json"
 import type { ArmSpec } from "../arms"
 import { ARMS } from "../constants"
-import { claude, projectDir } from "../lib/claude"
+import { chooseAccount, claude, projectDir } from "../lib/claude"
 import { BASE_SETTINGS, READ_ONLY } from "../lib/constants"
-import { blocks, parse, textOf } from "../lib/points"
+import { extractJson } from "../lib/json"
+import { parse } from "../lib/points"
 import { startProxies as spawnProxies } from "../lib/proxy"
 import { lookupsAfterQuestion } from "../real/run"
-import type { Meta } from "./generate"
 import { ANSWER_MODEL, CANON, CUT_SHARE, NATIVE, RECALL, RUNS, SESSIONS, SUPERSEDED_AFTER, SUPERSEDED_BEFORE, TASKS, TRANSCRIPTS } from "./constants"
+import type { Meta } from "./generate"
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 
-export const norm = (text: string) => String(text ?? "").toLowerCase().replace(/[`'"“”‘’]/g, "").replace(/(\d),(\d{3})/g, "$1$2").replace(/\s+/g, " ").trim()
+export const norm = (text: string) =>
+  String(text ?? "")
+    .toLowerCase()
+    .replace(/[`'"“”‘’]/g, "")
+    .replace(/(\d),(\d{3})/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim()
 
 export type Verdict = "correct" | "stale" | "wrong" | "unknown"
 
@@ -41,14 +47,22 @@ export function verdict(fact: Meta["facts"][number], response: string | undefine
 function writeCopy(cwd: string, lines: string[], id: string, edit?: (e: any) => any) {
   const file = path.join(projectDir(cwd), `${id}.jsonl`)
   mkdirSync(path.dirname(file), { recursive: true })
-  writeFileSync(file, lines.map((line) => {
-    try {
-      let e = JSON.parse(line)
-      if (e.sessionId) e.sessionId = id
-      if (edit) e = edit(e)
-      return JSON.stringify(e)
-    } catch { return null }
-  }).filter(Boolean).join("\n") + "\n")
+  writeFileSync(
+    file,
+    `${lines
+      .map((line) => {
+        try {
+          let e = JSON.parse(line)
+          if (e.sessionId) e.sessionId = id
+          if (edit) e = edit(e)
+          return JSON.stringify(e)
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+      .join("\n")}\n`,
+  )
   return file
 }
 
@@ -72,18 +86,24 @@ async function nativeCopy(meta: Meta, lines: string[], log: (m: string) => void)
   if (existsSync(file)) return readFileSync(file, "utf8").split("\n").filter(Boolean)
   log("native: running /compact")
   let copy = ""
-  const out = await claude(() => {
-    if (copy) rmSync(copy, { force: true })
-    const id = crypto.randomUUID()
-    copy = writeCopy(meta.cwd, lines, id)
-    return ["--resume", id, "--model", ANSWER_MODEL, "--settings", JSON.stringify(BASE_SETTINGS)]
-  }, { cwd: meta.cwd, stdin: "/compact" })
+  const out = await claude(
+    () => {
+      if (copy) rmSync(copy, { force: true })
+      const id = crypto.randomUUID()
+      copy = writeCopy(meta.cwd, lines, id)
+      return ["--resume", id, "--model", ANSWER_MODEL, "--settings", JSON.stringify(BASE_SETTINGS)]
+    },
+    { cwd: meta.cwd, stdin: "/compact", account: chooseAccount() },
+  )
   const after = readFileSync(copy, "utf8").split("\n").filter(Boolean)
   rmSync(copy, { force: true })
   const boundary = parse(after).find((e) => e.subtype === "compact_boundary")
-  if (!boundary) { log(`/compact produced no summary: ${String(out.result).slice(0, 200)}`); return null }
+  if (!boundary) {
+    log(`/compact produced no summary: ${String(out.result).slice(0, 200)}`)
+    return null
+  }
   mkdirSync(NATIVE, { recursive: true })
-  writeFileSync(file, after.join("\n") + "\n")
+  writeFileSync(file, `${after.join("\n")}\n`)
   return after
 }
 
@@ -108,7 +128,16 @@ export interface ArmResult {
 function proxyLog(spec: ArmSpec, session: string) {
   const file = path.join(RUNS, "proxies", spec.proxy, "requests.jsonl")
   if (!existsSync(file)) return [] as any[]
-  return readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) } catch { return {} } })
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        return JSON.parse(l)
+      } catch {
+        return {}
+      }
+    })
     .filter((r) => String(r.thread ?? "").startsWith(session) || r.context?.session === session)
 }
 
@@ -131,13 +160,22 @@ async function runArm(meta: Meta, spec: ArmSpec, lines: string[], native: string
   }
   const implicit = meta.facts.filter((f) => f.implicit && f.task)
   const errors: string[] = []
-  const first = await claude(fresh, { cwd: meta.cwd, stdin: TASKS(implicit), env })
+  const account = chooseAccount()
+  const first = await claude(fresh, { cwd: meta.cwd, stdin: TASKS(implicit), env, account })
   let replies: Record<string, string> = {}
-  try { replies = Object.fromEntries(extractJson(first.result).replies.map((r: any) => [String(r.id), String(r.reply ?? "")])) } catch { errors.push(`tasks: ${String(first.result).slice(0, 200)}`) }
+  try {
+    replies = Object.fromEntries(extractJson(first.result).replies.map((r: any) => [String(r.id), String(r.reply ?? "")]))
+  } catch {
+    errors.push(`tasks: ${String(first.result).slice(0, 200)}`)
+  }
   const recallStart = new Date().toISOString()
-  const second = await claude(["--resume", id, "--model", ANSWER_MODEL, "--permission-mode", "default", "--settings", settings, "--allowedTools", READ_ONLY], { cwd: meta.cwd, stdin: RECALL(meta.facts), env })
+  const second = await claude(["--resume", id, "--model", ANSWER_MODEL, "--permission-mode", "default", "--settings", settings, "--allowedTools", READ_ONLY], { cwd: meta.cwd, stdin: RECALL(meta.facts), env, account })
   let answers: Record<string, string> = {}
-  try { answers = Object.fromEntries(extractJson(second.result).answers.map((a: any) => [String(a.id), String(a.answer ?? "")])) } catch { errors.push(`recall: ${String(second.result).slice(0, 200)}`) }
+  try {
+    answers = Object.fromEntries(extractJson(second.result).answers.map((a: any) => [String(a.id), String(a.answer ?? "")]))
+  } catch {
+    errors.push(`recall: ${String(second.result).slice(0, 200)}`)
+  }
   const lookups = lookupsAfterQuestion(file, meta.cwd)
   rmSync(file, { force: true })
   const requests = proxyLog(spec, id)
@@ -166,34 +204,37 @@ async function runSession(meta: Meta, specs: ArmSpec[], tag: string) {
   const log = (m: string) => console.log(`[${meta.id} ${meta.repo}] ${m}`)
   const dir = path.join(RUNS, tag)
   mkdirSync(dir, { recursive: true })
-  const lines = readFileSync(path.join(SESSIONS, `${meta.id}.jsonl`), "utf8").split("\n").filter(Boolean)
+  const lines = readFileSync(path.join(SESSIONS, `${meta.id}.jsonl`), "utf8")
+    .split("\n")
+    .filter(Boolean)
   mkdirSync(TRANSCRIPTS, { recursive: true })
-  writeFileSync(path.join(TRANSCRIPTS, `${meta.id}.jsonl`), lines.join("\n") + "\n")
+  writeFileSync(path.join(TRANSCRIPTS, `${meta.id}.jsonl`), `${lines.join("\n")}\n`)
   const todo = specs.filter((s) => !existsSync(path.join(dir, `${meta.id}.${s.name}.json`)))
-  if (!todo.length) return
-  const native = todo.some((s) => s.native) ? await nativeCopy(meta, lines, log) : []
+  if (todo.length === 0) return
+  const native = await (todo.some((s) => s.native) ? nativeCopy(meta, lines, log) : Promise.resolve([]))
   if (!native) return
   const canon = path.join(CANON, `${meta.id}.json`)
   mkdirSync(CANON, { recursive: true })
   const save = (r: ArmResult) => writeFileSync(path.join(dir, `${meta.id}.${r.arm}.json`), JSON.stringify(r, null, 2))
   const plain = todo.filter((s) => !s.native)
   const natives = todo.filter((s) => s.native)
-  const capture = existsSync(canon) ? Promise.resolve() : (async () => { while (!existsSync(canon)) await Bun.sleep(1_000) })()
-  if (!plain.length && !existsSync(canon)) {
+  const waitForCanon = async () => {
+    while (!existsSync(canon)) await Bun.sleep(1_000)
+  }
+  const capture = existsSync(canon) ? Promise.resolve() : waitForCanon()
+  if (plain.length === 0 && !existsSync(canon)) {
     log("no canonical prompt yet; running the full arm to capture it")
     plain.push(ARMS.find((a) => a.name === "full")!)
   }
-  await Promise.all([
-    ...plain.map((s) => runArm(meta, s, lines, native, log).then((r) => (todo.includes(s) ? save(r) : undefined))),
-    capture.then(() => Promise.all(natives.map((s) => runArm(meta, s, lines, native, log).then(save)))),
-  ])
+  await Promise.all([...plain.map((s) => runArm(meta, s, lines, native, log).then((r) => (todo.includes(s) ? save(r) : undefined))), capture.then(() => Promise.all(natives.map((s) => runArm(meta, s, lines, native, log).then(save))))])
 }
 
 export const startProxies = (specs: ArmSpec[]) => spawnProxies(specs, path.join(RUNS, "proxies"))
 
 export function loadMetas(split: string, only?: string[]): Meta[] {
   if (!existsSync(SESSIONS)) return []
-  return Array.from(new Bun.Glob("s*.meta.json").scanSync({ cwd: SESSIONS })).sort()
+  return Array.from(new Bun.Glob("s*.meta.json").scanSync({ cwd: SESSIONS }))
+    .sort()
     .map((f) => JSON.parse(readFileSync(path.join(SESSIONS, f), "utf8")) as Meta)
     .filter((m) => (split === "all" || m.split === split) && (!only || only.includes(m.id)))
 }
@@ -201,7 +242,13 @@ export function loadMetas(split: string, only?: string[]): Meta[] {
 if (import.meta.main) {
   const split = arg("split") ?? "dev"
   const names = (arg("arms") ?? "native,native+guide,full,tail,eunoe,rolling,trim").split(",")
-  const specs = names.map((n) => ARMS.find((a) => a.name === n) ?? (() => { throw new Error(`unknown arm ${n}`) })())
+  const specs = names.map(
+    (n) =>
+      ARMS.find((a) => a.name === n) ??
+      (() => {
+        throw new Error(`unknown arm ${n}`)
+      })(),
+  )
   const metas = loadMetas(split, arg("sessions")?.split(","))
   const parallel = Number(arg("parallel") ?? 3)
   const tag = arg("tag") ?? "main"
@@ -210,14 +257,16 @@ if (import.meta.main) {
   await Bun.sleep(1500)
   try {
     let next = 0
-    await Promise.all(Array.from({ length: parallel }, async () => {
-      while (next < metas.length) {
-        const meta = metas[next++]
-        await runSession(meta, specs, tag).catch((e) => console.error(`[${meta.id}]`, e))
-      }
-    }))
+    await Promise.all(
+      Array.from({ length: parallel }, async () => {
+        while (next < metas.length) {
+          const meta = metas[next++]
+          await runSession(meta, specs, tag).catch((e) => console.error(`[${meta.id}]`, e))
+        }
+      }),
+    )
   } finally {
-    proxies.forEach((p) => p.kill())
+    for (const p of proxies) p.kill()
   }
   console.log("done")
 }

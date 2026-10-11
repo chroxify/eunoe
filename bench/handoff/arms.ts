@@ -1,5 +1,5 @@
 import type { ArmSpec } from "../arms"
-import { HANDOFF_ARMS, PROXIES, SCENARIOS } from "./constants"
+import { HANDOFF_ARMS, PROXIES, type SCENARIOS } from "./constants"
 
 export interface HandoffArm {
   name: string

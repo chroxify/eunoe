@@ -27,6 +27,7 @@ export const DEFAULTS: Config = {
   keepTurns: "all",
   keep: 3,
   budget: 100_000,
+  turnCap: 100_000,
   search: "markdown",
   rerank: "jev-preview",
   upstream: "https://api.anthropic.com",
@@ -35,7 +36,9 @@ export const DEFAULTS: Config = {
 
 export const MODES: Mode[] = ["default", "compact", "off"]
 export const SEARCH_MODES: SearchMode[] = ["jsonl", "markdown", "xml", "qmd"]
-export const TUNABLES: Tunable[] = ["keep", "budget", "compactAt", "keepTurns", "search", "rerank"]
+export const TUNABLES: Tunable[] = ["keep", "budget", "turnCap", "compactAt", "keepTurns", "search", "rerank"]
 export const TEXT_TUNABLES: Tunable[] = ["search", "rerank"]
 export const SCOPES: Scope[] = ["all", "sessions"]
+export const TURN_CAP_MIN = 1_000
+export const TURN_CAP_OFF = "off"
 export const SESSION_ID_PATTERN = /^[a-zA-Z0-9-]+$/

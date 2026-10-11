@@ -1,19 +1,22 @@
 import { readFileSync } from "node:fs"
 import path from "node:path"
-import { splitTurns } from "../../src/context/turns"
-import { sizeOf } from "../../src/proxy/estimate"
-import { DEFAULT_RATIO } from "../../src/proxy/constants"
+import { splitTurns } from "../../src/context/fold/turns"
 import type { Message } from "../../src/context/types"
+import { DEFAULT_RATIO } from "../../src/proxy/constants"
+import { sizeOf } from "../../src/proxy/estimate"
 import { BUDGETS, PLANTED_SESSIONS } from "./constants"
 
 const files = [...new Bun.Glob("s[0-9][0-9].jsonl").scanSync({ cwd: PLANTED_SESSIONS, absolute: true })].sort()
 const keep = Number(process.argv[2] ?? 3)
 
 function load(file: string): Message[] {
-  return readFileSync(file, "utf8").split("\n").filter(Boolean).flatMap((line) => {
-    const e = JSON.parse(line)
-    return (e.type === "user" || e.type === "assistant") && e.message ? [e.message as Message] : []
-  })
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .flatMap((line) => {
+      const e = JSON.parse(line)
+      return (e.type === "user" || e.type === "assistant") && e.message ? [e.message as Message] : []
+    })
 }
 
 const rows: Record<number, { steps: number[]; gaps: number[]; live: number[] }> = Object.fromEntries(BUDGETS.map((b) => [b, { steps: [], gaps: [], live: [] }]))
@@ -45,8 +48,11 @@ for (const file of files) {
   }
   console.error(`${path.basename(file)} ${turns.length} turns ~${Math.round(total / 1000)}k`)
 }
-const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
-const med = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0 }
+const mean = (xs: number[]) => (xs.length > 0 ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
+const med = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b)
+  return s.length > 0 ? s[Math.floor(s.length / 2)] : 0
+}
 console.log(`keep=${keep}, ${files.length} sessions`)
 console.log("budget | steps/session (mean) | turns between steps (median, mean) | sessions with 0 steps | peak context (median)")
 for (const b of BUDGETS) {

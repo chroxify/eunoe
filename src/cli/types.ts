@@ -1,6 +1,4 @@
-export type Settings = Record<string, any>
-
-export type OptionRow = [flag: string, description: string]
+import type { OptionRow } from "./terminal/types"
 
 export interface Command {
   summary: string
@@ -10,5 +8,3 @@ export interface Command {
   hidden?: boolean
   run: (args: string[]) => void | Promise<void>
 }
-
-export type RequestRecord = Record<string, any>

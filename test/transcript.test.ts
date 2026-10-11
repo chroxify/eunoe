@@ -12,12 +12,23 @@ function writeSession(dir: string, id: string) {
   mkdirSync(project, { recursive: true })
   const entries = [
     { type: "user", uuid: "1", parentUuid: null, timestamp: "2026-10-07T10:00:00Z", message: { role: "user", content: "deploy to staging yourself from now on" } },
-    { type: "assistant", uuid: "2", parentUuid: "1", message: { role: "assistant", content: [{ type: "text", text: "Deploying." }, { type: "tool_use", id: "t1", name: "Bash", input: { command: "wrangler deploy" } }] } },
+    {
+      type: "assistant",
+      uuid: "2",
+      parentUuid: "1",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Deploying." },
+          { type: "tool_use", id: "t1", name: "Bash", input: { command: "wrangler deploy" } },
+        ],
+      },
+    },
     { type: "user", uuid: "3", parentUuid: "2", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "Current Version ID: 98330153" }] } },
     { type: "assistant", uuid: "4", parentUuid: "3", message: { role: "assistant", content: [{ type: "text", text: "Deployed version 98330153." }] } },
   ]
   const file = path.join(project, `${id}.jsonl`)
-  writeFileSync(file, entries.map((e) => JSON.stringify(e)).join("\n") + "\n")
+  writeFileSync(file, `${entries.map((e) => JSON.stringify(e)).join("\n")}\n`)
   return file
 }
 

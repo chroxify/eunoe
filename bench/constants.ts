@@ -23,4 +23,6 @@ export const ARMS: ArmSpec[] = [
   { name: "rolling+both2", proxy: "rolling-both2", port: 8827, config: { ...CUT, eval: { forceCut: true, rolling: { keep: 3, budget: 100_000 }, evidence: true, recall: true } } },
   { name: "rolling+both3", proxy: "rolling-both3", port: 8828, config: { ...CUT, eval: { forceCut: true, rolling: { keep: 3, budget: 100_000 }, evidence: true, recall: true, rerank: { model: "jev-preview" } } } },
   { name: "default", proxy: "default", port: 8829, config: { mode: "default", search: "markdown", eval: { forceCut: true } } },
+  { name: "default-nocap", proxy: "default-nocap", port: 8830, config: { mode: "default", search: "markdown", turnCap: "off", eval: { forceCut: true } } },
+  { name: "default-cap5k", proxy: "default-cap5k", port: 8831, config: { mode: "default", search: "markdown", turnCap: 5_000, eval: { forceCut: true } } },
 ]

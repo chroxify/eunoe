@@ -1,14 +1,6 @@
 import { B32, CODENAMES, DEPTH_BUCKETS, ERROR_KINDS, INSTRUCTION_KINDS, SYLLABLES, VALUE_KINDS } from "./constants"
 
-export type FactType =
-  | "tool_value"
-  | "prose_value"
-  | "error"
-  | "instruction"
-  | "revised"
-  | "superseded"
-  | "decision"
-  | "promise"
+export type FactType = "tool_value" | "prose_value" | "error" | "instruction" | "revised" | "superseded" | "decision" | "promise"
 
 export interface Plant {
   turn: number
@@ -39,7 +31,7 @@ export function rng(seed: number) {
 }
 
 export function values(rand: () => number) {
-  const pick = <T,>(items: T[]) => items[Math.floor(rand() * items.length)]
+  const pick = <T>(items: T[]) => items[Math.floor(rand() * items.length)]
   const int = (lo: number, hi: number) => lo + Math.floor(rand() * (hi - lo + 1))
   const chars = (alphabet: string, n: number) => Array.from({ length: n }, () => pick([...alphabet])).join("")
   const word = (n = 2) => Array.from({ length: n }, () => pick(SYLLABLES)).join("")
@@ -52,6 +44,105 @@ export type Draw = ReturnType<typeof values>
 export interface PlanOptions {
   seed: number
   turns: number
+}
+
+interface Plan {
+  v: Draw
+  turns: number
+  turnAt: (ago: number) => number
+  id: () => string
+  nextValueKind: () => (typeof VALUE_KINDS)[number]
+  nextInstructionKind: () => (typeof INSTRUCTION_KINDS)[number]
+  freshCodename: () => string
+}
+
+type Build = (plan: Plan, ago: number) => Fact
+
+const valueFact =
+  (type: FactType): Build =>
+  (plan, ago) => {
+    const kind = plan.nextValueKind()(plan.v)
+    return { id: plan.id(), type, label: kind.label, answer: kind.value, plants: [{ turn: plan.turnAt(ago), value: kind.value }], brief: kind.label }
+  }
+
+const builders: Record<FactType, Build> = {
+  tool_value: valueFact("tool_value"),
+  prose_value: valueFact("prose_value"),
+  error: (plan, ago) => {
+    const kind = plan.v.pick(ERROR_KINDS)(plan.v)
+    return { id: plan.id(), type: "error", label: kind.label, answer: kind.value, plants: [{ turn: plan.turnAt(ago), value: kind.value }], brief: kind.label }
+  },
+  superseded: (plan, ago) => {
+    const kind = plan.nextValueKind()
+    const first = kind(plan.v)
+    const second = kind(plan.v).value
+    const firstAgo = Math.min(plan.turns - 1, ago + plan.v.int(6, 20))
+    return {
+      id: plan.id(),
+      type: "superseded",
+      label: first.label,
+      answer: second,
+      stale: first.value,
+      plants: [
+        { turn: plan.turnAt(firstAgo), value: first.value },
+        { turn: plan.turnAt(ago), value: second },
+      ],
+      brief: first.label,
+    }
+  },
+  instruction: (plan, ago) => {
+    const first = plan.nextInstructionKind()(plan.v)
+    return { id: plan.id(), type: "instruction", label: first.label, answer: first.value, plants: [{ turn: plan.turnAt(ago), value: first.value }], implicit: true, brief: first.brief(first.value) }
+  },
+  revised: (plan, ago) => {
+    const kind = plan.nextInstructionKind()
+    const first = kind(plan.v)
+    const next = kind(plan.v)
+    const firstAgo = Math.min(plan.turns - 1, ago + plan.v.int(8, 25))
+    return {
+      id: plan.id(),
+      type: "revised",
+      label: first.label,
+      answer: next.value,
+      stale: first.value,
+      plants: [
+        { turn: plan.turnAt(firstAgo), value: first.value },
+        { turn: plan.turnAt(ago), value: next.value },
+      ],
+      implicit: true,
+      brief: `${first.brief(first.value)}; later changed so that ${next.brief(next.value)}`,
+    }
+  },
+  decision: (plan, ago) => {
+    const chosen = plan.freshCodename()
+    const rejected = plan.freshCodename()
+    return {
+      id: plan.id(),
+      type: "decision",
+      label: "the codename of the approach that was considered and rejected",
+      answer: rejected,
+      stale: chosen,
+      plants: [{ turn: plan.turnAt(ago), value: `${chosen}|${rejected}` }],
+      brief: `approach "${chosen}" is chosen and approach "${rejected}" is rejected`,
+    }
+  },
+  promise: (plan, ago) => {
+    const from = plan.v.camel()
+    const to = plan.v.camel()
+    return {
+      id: plan.id(),
+      type: "promise",
+      label: "the rename that was deferred to later",
+      answer: to,
+      plants: [{ turn: plan.turnAt(ago), value: `${from}|${to}` }],
+      brief: `renaming \`${from}\` to \`${to}\` is deferred to later and never done`,
+    }
+  },
+}
+
+function cycle<T>(items: T[]): () => T {
+  let index = 0
+  return () => items[index++ % items.length]
 }
 
 export function planFacts({ seed, turns }: PlanOptions): Fact[] {
@@ -69,9 +160,22 @@ export function planFacts({ seed, turns }: PlanOptions): Fact[] {
     const [, lo, hi] = DEPTH_BUCKETS[bucket]
     return v.int(lo, Math.min(hi, turns - 1))
   }
-  const facts: Fact[] = []
   let n = 0
-  const id = () => `f${String(++n).padStart(2, "0")}`
+  const codenames = new Set<string>()
+  const plan: Plan = {
+    v,
+    turns,
+    turnAt,
+    id: () => `f${String(++n).padStart(2, "0")}`,
+    nextValueKind: cycle([...VALUE_KINDS].sort(() => rand() - 0.5)),
+    nextInstructionKind: cycle([...INSTRUCTION_KINDS].sort(() => rand() - 0.5)),
+    freshCodename: () => {
+      let name = v.codename()
+      while (codenames.has(name)) name = v.codename()
+      codenames.add(name)
+      return name
+    },
+  }
   const layout: Array<[FactType, number[]]> = [
     ["tool_value", [0, 0, 1, 2, 3, 4]],
     ["prose_value", [0, 2, 4]],
@@ -82,53 +186,7 @@ export function planFacts({ seed, turns }: PlanOptions): Fact[] {
     ["decision", [1, 3, 4]],
     ["promise", [2, 4]],
   ]
-  const valueKinds = [...VALUE_KINDS].sort(() => rand() - 0.5)
-  const instructionKinds = [...INSTRUCTION_KINDS].sort(() => rand() - 0.5)
-  const codenames = new Set<string>()
-  const freshCodename = () => {
-    let name = v.codename()
-    while (codenames.has(name)) name = v.codename()
-    codenames.add(name)
-    return name
-  }
-  let valueIndex = 0
-  let instructionIndex = 0
-  for (const [type, buckets] of layout) {
-    for (const bucket of buckets) {
-      const ago = agoIn(bucket)
-      if (type === "tool_value" || type === "prose_value") {
-        const kind = valueKinds[valueIndex++ % valueKinds.length](v)
-        facts.push({ id: id(), type, label: kind.label, answer: kind.value, plants: [{ turn: turnAt(ago), value: kind.value }], brief: kind.label })
-      } else if (type === "error") {
-        const kind = v.pick(ERROR_KINDS)(v)
-        facts.push({ id: id(), type, label: kind.label, answer: kind.value, plants: [{ turn: turnAt(ago), value: kind.value }], brief: kind.label })
-      } else if (type === "superseded") {
-        const kind = valueKinds[valueIndex++ % valueKinds.length](v)
-        const second = valueKinds[(valueIndex - 1) % valueKinds.length](v).value
-        const firstAgo = Math.min(turns - 1, ago + v.int(6, 20))
-        facts.push({ id: id(), type, label: kind.label, answer: second, stale: kind.value, plants: [{ turn: turnAt(firstAgo), value: kind.value }, { turn: turnAt(ago), value: second }], brief: kind.label })
-      } else if (type === "instruction" || type === "revised") {
-        const kind = instructionKinds[instructionIndex++ % instructionKinds.length]
-        const first = kind(v)
-        if (type === "instruction") {
-          facts.push({ id: id(), type, label: first.label, answer: first.value, plants: [{ turn: turnAt(ago), value: first.value }], implicit: true, brief: first.brief(first.value) })
-        } else {
-          const next = kind(v)
-          const firstAgo = Math.min(turns - 1, ago + v.int(8, 25))
-          facts.push({ id: id(), type, label: first.label, answer: next.value, stale: first.value, plants: [{ turn: turnAt(firstAgo), value: first.value }, { turn: turnAt(ago), value: next.value }], implicit: true, brief: `${first.brief(first.value)}; later changed so that ${next.brief(next.value)}` })
-        }
-      } else if (type === "decision") {
-        const chosen = freshCodename()
-        const rejected = freshCodename()
-        facts.push({ id: id(), type, label: "the codename of the approach that was considered and rejected", answer: rejected, stale: chosen, plants: [{ turn: turnAt(ago), value: `${chosen}|${rejected}` }], brief: `approach "${chosen}" is chosen and approach "${rejected}" is rejected` })
-      } else if (type === "promise") {
-        const from = v.camel()
-        const to = v.camel()
-        facts.push({ id: id(), type, label: "the rename that was deferred to later", answer: to, plants: [{ turn: turnAt(ago), value: `${from}|${to}` }], brief: `renaming \`${from}\` to \`${to}\` is deferred to later and never done` })
-      }
-    }
-  }
-  return facts
+  return layout.flatMap(([type, buckets]) => buckets.map((bucket) => builders[type](plan, agoIn(bucket))))
 }
 
 export const agoOf = (fact: Fact, turns: number) => turns - fact.plants.at(-1)!.turn + 1

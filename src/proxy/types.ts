@@ -1,4 +1,5 @@
 import type { Config } from "../config/types"
+import type { CompactOptions } from "../context/fold/types"
 import type { Body, Message } from "../context/types"
 import type { TranscriptRef } from "../transcript/types"
 
@@ -10,13 +11,23 @@ export interface ThreadState {
   recalls?: Record<string, string>
 }
 
-export type Note = Record<string, unknown>
+type Note = Record<string, unknown>
 
 export interface ContextFingerprint {
   system: string
   tools: string
   skills: string[]
   given?: ContextFingerprint
+}
+
+export interface Outgoing {
+  note: Note
+  threadKey: string | null
+  bodyText: string | undefined
+  sentSize: number
+  givenSize: number
+  fixedSize: number
+  sent: (ContextFingerprint & { session: string | null }) | null
 }
 
 export interface Canonical {
@@ -45,6 +56,12 @@ export interface Rewrite {
   note: Note
 }
 
+export interface Prefetched {
+  reranked: boolean
+  rerankError: string | null
+  recalled: number
+}
+
 export interface CompactInput {
   body: Body
   config: Config
@@ -54,6 +71,7 @@ export interface CompactInput {
   mayCompact: boolean
   omittedBefore?: number
   decorate?: (messages: Message[]) => Message[]
+  reduce?: CompactOptions["reduce"]
 }
 
 export interface CompactResult {

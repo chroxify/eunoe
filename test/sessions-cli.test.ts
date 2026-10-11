@@ -1,11 +1,10 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { continuePrompt } from "../src/cli/sessions"
 import { load, loadedLine, writeLoaded } from "../src/cli/commands/load"
+import { candidateOf, continuePrompt } from "../src/cli/sessions"
+import { rankCandidates, sessionCandidates } from "../src/cli/sessions/source"
 import { paths } from "../src/config/constants"
-import { rankCandidates, sessionCandidates } from "../src/cli/session-source"
-import { candidateOf } from "../src/cli/sessions"
 import { recordSession } from "../src/proxy/sessions"
 
 const CWD = "/repo/sessions-cli"
@@ -33,7 +32,7 @@ function priorSession(id: string, cwd: string, title: string, topic: "deploy" | 
     }
   }
   const file = path.join(dir, `${id}.jsonl`)
-  writeFileSync(file, rows.join("\n") + "\n")
+  writeFileSync(file, `${rows.join("\n")}\n`)
   recordSession(id, "default", file)
   return file
 }
@@ -48,7 +47,9 @@ beforeAll(async () => {
   priorSession("prior-seo-bbbbbbbb", CWD, "SEO landing pages", "seo")
   priorSession("prior-other-cccccccc", "/repo/elsewhere", "Other repo deploys", "deploy")
   process.cwd = () => CWD
-  spyOn(console, "log").mockImplementation((text: string) => { logged.push(text) })
+  spyOn(console, "log").mockImplementation((text: string) => {
+    logged.push(text)
+  })
 })
 
 afterAll(() => {
@@ -87,7 +88,9 @@ describe("load", () => {
     expect(text).toContain("yalsho/")
     expect(text).toContain("Deployed the lease service, attempt 6.")
     expect(text.split("\n")).toHaveLength(written.lines)
-    expect(loadedLine(cand, written)).toBe(`Session prior-de "Lease service deploys" written to ${written.file} (${written.lines} lines, ${Math.round(written.chars / 1000)}k characters). Read the whole file with the Read tool, from line 1 to line ${written.lines}, before acting.`)
+    expect(loadedLine(cand, written)).toBe(
+      `Session prior-de "Lease service deploys" written to ${written.file} (${written.lines} lines, ${Math.round(written.chars / 1000)}k characters). Read the whole file with the Read tool, from line 1 to line ${written.lines}, before acting.`,
+    )
     logged.length = 0
     await load.run(["prior-dep"])
     expect(logged).toEqual([loadedLine(cand, written)])

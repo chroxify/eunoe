@@ -1,17 +1,17 @@
-import { loadConfig } from "../../config"
-import { browse } from "../browse"
-import { routedDirs } from "../inspect"
-import { interactive } from "../prompt"
+import { readConfig } from "../../config"
+import { routedDirs } from "../proxy/inspect"
 import { candidatesHere, continuePrompt, copy } from "../sessions"
+import { browse } from "../sessions/browse"
+import { interactive } from "../terminal/prompt"
+import { c, fail, line, ok, warn } from "../terminal/ui"
 import type { Command } from "../types"
-import { c, fail, line, ok, warn } from "../ui"
 import { listSessions } from "./sessions"
 
 export function handOff(id: string) {
   const prompt = continuePrompt(id)
   line()
   ok(`${c.bold(prompt)}  ${copy(prompt) ? c.dim("copied") : ""}`)
-  if (!routedDirs(loadConfig()).length) warn("Claude Code isn't routed through eunoe, so the agent won't know to load it (eunoe start).")
+  if (routedDirs(readConfig()).length === 0) warn("Claude Code isn't routed through eunoe, so the agent won't know to load it (eunoe start).")
   line()
 }
 
@@ -29,9 +29,12 @@ export const continueSession: Command = {
   ],
   options: [["--list", "List the sessions without picking one"]],
   async run(args) {
-    const words = args.filter((a) => !a.startsWith("-")).join(" ").trim()
+    const words = args
+      .filter((a) => !a.startsWith("-"))
+      .join(" ")
+      .trim()
     const candidates = candidatesHere()
-    if (!candidates.length) fail("No earlier sessions in this directory to continue from.")
+    if (candidates.length === 0) fail("No earlier sessions in this directory to continue from.")
     if (args.includes("--list") || !interactive) return listSessions(words, candidates)
     const chosen = await browse("Continue from", candidates, words, "↑↓ move · type to filter · enter copy the prompt · esc quit")
     if (chosen) handOff(chosen.id)

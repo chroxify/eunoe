@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
-import { VERSION } from "../version"
-import { wantsHelp } from "./args"
+import { VERSION } from "../constants"
 import { commands } from "./commands"
-import { printCommandHelp, printHelp } from "./help"
-import { closest, fail, line } from "./ui"
+import { wantsHelp } from "./terminal/args"
+import { printCommandHelp, printHelp } from "./terminal/help"
+import { closest, fail, line } from "./terminal/ui"
 
 const [name, ...args] = process.argv.slice(2)
 

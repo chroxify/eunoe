@@ -7,7 +7,7 @@ function stateFile(key: string) {
   return path.join(paths.threads, `${key.replace(/[^a-zA-Z0-9_-]/g, "_")}.json`)
 }
 
-export function loadState(key: string): ThreadState {
+export function readState(key: string): ThreadState {
   try {
     return JSON.parse(readFileSync(stateFile(key), "utf8"))
   } catch {

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { pickRecallWith, recallChunks } from "../src/context/recall"
-import { jevReranker, orderByProbability } from "../src/context/rerank"
-import type { Message, Reranker } from "../src/context/types"
+import { jevReranker, orderByProbability } from "../src/context/recall/rerank"
+import type { Reranker } from "../src/context/recall/types"
+import type { Message } from "../src/context/types"
 import { prefetchRecall, rewrite } from "../src/proxy/rewrite"
 import { config, freshSession, reply, user } from "./fixtures"
 
@@ -58,7 +59,10 @@ describe("reranked recall", () => {
     const cfg = config({ eval: { strategy: "trim", rerank: { model: "jev-preview" } } })
     const input = { body: { messages: history, tools: [{}] }, sessionId: id, config: cfg, transcript: null, window: null, mayCompact: true }
     const calls: string[] = []
-    const spy: Reranker = async (query, _c, candidates) => { calls.push(query); return candidates }
+    const spy: Reranker = async (query, _c, candidates) => {
+      calls.push(query)
+      return candidates
+    }
     expect(await prefetchRecall(input, spy)).toMatchObject({ reranked: true, rerankError: null })
     expect(calls).toHaveLength(1)
     expect(await prefetchRecall(input, spy)).toBeNull()

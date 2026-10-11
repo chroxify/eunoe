@@ -1,18 +1,18 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { extractJson } from "../lib/json"
+import { rank, terms } from "../../src/context/recall"
+import { findSessionFile } from "../../src/transcript/locate"
 import { AccountLimited, chooseAccount, claude, projectDir } from "../lib/claude"
 import { ALL_CONFIG_DIRS, BASE_SETTINGS, READ_ONLY } from "../lib/constants"
-import { findSessionFile } from "../../src/transcript/locate"
+import { extractJson } from "../lib/json"
 import { startProxies as spawnProxies } from "../lib/proxy"
-import { lookupsAfterQuestion } from "../real/run"
-import { type Meta } from "../planted/generate"
 import { ANSWER_MODEL, CANON, RECALL, TASKS } from "../planted/constants"
-import { loadMetas, verdict, type ArmResult } from "../planted/run"
-import { handoffArm, proxyOf, type HandoffArm, type Scenario } from "./arms"
-import { multiFolded, newWorkPrompt, outline, prepareSession, sessionFile } from "./prepare"
-import { rank, terms } from "../../src/context/recall"
+import type { Meta } from "../planted/generate"
+import { type ArmResult, loadMetas, verdict } from "../planted/run"
+import { lookupsAfterQuestion } from "../real/run"
+import { type HandoffArm, handoffArm, proxyOf, type Scenario } from "./arms"
 import { AGENT_BIN, AGENT_CANON, AGENT_SECTIONS, HANDOFF_ARMS, INJECT, PROMPTS, PROXIES, RUNS, SCENARIOS } from "./constants"
+import { multiFolded, newWorkPrompt, outline, prepareSession, sessionFile } from "./prepare"
 
 function agentCanon(meta: Meta, section: string): string {
   const file = path.join(AGENT_CANON, `${meta.id}.${section}.json`)
@@ -60,31 +60,83 @@ export interface HandoffResult extends ArmResult {
 function requestsOf(proxy: string, session: string) {
   const file = path.join(RUNS, "proxies", proxy, "requests.jsonl")
   if (!existsSync(file)) return [] as any[]
-  return readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l) } catch { return {} } })
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        return JSON.parse(l)
+      } catch {
+        return {}
+      }
+    })
     .filter((r) => String(r.thread ?? "").startsWith(session) || r.context?.session === session)
 }
 
-async function runOne(meta: Meta, scenario: Scenario, arm: HandoffArm, log: (m: string) => void): Promise<HandoffResult> {
-  const spec = proxyOf(arm)
-  const prompts = JSON.parse(readFileSync(path.join(PROMPTS, `${meta.id}.json`), "utf8"))
-  const asked = scenario === "new" ? await newWorkPrompt(meta) : (prompts[scenario] as string)
-  const resume = arm.agent === "manual" ? `${asked}\n\nThis continues an earlier session: run \`eunoe load ${meta.id}\`` : asked
-  const siblings = loadMetas("all").filter((m) => m.repo === meta.repo)
-  const picked = arm.pick ? pickSource(resume, siblings) : meta
-  if (arm.pick && arm.inject !== "multi" && !existsSync(path.join(INJECT, `${picked.id}.${arm.inject}.md`))) await prepareSession(picked, log)
-  const source = arm.allSources ? siblings.map(sessionFile).join(",") : sessionFile(meta)
-  let injectFile = arm.inject ? path.join(INJECT, `${picked.id}.${arm.inject}.md`) : null
+function injectFileFor(arm: HandoffArm, meta: Meta, picked: Meta, scenario: Scenario, resume: string, siblings: Meta[]): string | null {
   if (arm.inject === "multi") {
     const chosen = rankSources(resume, siblings).slice(0, arm.multi ?? 2)
-    injectFile = path.join(INJECT, `${meta.id}.${scenario}.multi${arm.multi ?? 2}.md`)
-    if (!existsSync(injectFile)) writeFileSync(injectFile, multiFolded(chosen, 120_000))
+    const file = path.join(INJECT, `${meta.id}.${scenario}.multi${arm.multi ?? 2}.md`)
+    if (!existsSync(file)) writeFileSync(file, multiFolded(chosen, 120_000))
+    return file
   }
+  return arm.inject ? path.join(INJECT, `${picked.id}.${arm.inject}.md`) : null
+}
+
+function headersFor(arm: HandoffArm, meta: Meta, injectFile: string | null, source: string): string[] {
   const headers = [`x-eunoe-canonical: ${arm.agent ? agentCanon(meta, arm.section ?? "v1") : path.join(CANON, `${meta.id}.json`)}`]
   if (injectFile) headers.push(`x-eunoe-handoff-file: ${injectFile}`)
   if (arm.recall) headers.push(`x-eunoe-handoff-source: ${source}`)
   if (arm.users) headers.push(`x-eunoe-handoff-source-users: 1`)
   if (arm.hint) headers.push(`x-eunoe-transcript: ${source}`)
-  const env: Record<string, string> = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${spec.port}`, ANTHROPIC_CUSTOM_HEADERS: headers.join("\n") }
+  return headers
+}
+
+function parseMap(result: string, key: "replies" | "answers", field: "reply" | "answer"): Record<string, string> {
+  return Object.fromEntries(extractJson(result)[key].map((r: any) => [String(r.id), String(r[field] ?? "")]))
+}
+
+function newWorkResult(arm: HandoffArm, meta: Meta, id: string, asked: string, opening: any, openingMs: number, log: (m: string) => void): HandoffResult {
+  const file = findSessionFile(id, ALL_CONFIG_DIRS) ?? path.join(projectDir(meta.cwd), `${id}.jsonl`)
+  const calls = agentCalls(file)
+  rmSync(file, { force: true })
+  log(`new/${arm.name}: ${calls.length} session commands, ${Math.round(openingMs / 1000)}s`)
+  return {
+    arm: arm.name,
+    scenario: "new",
+    resumePrompt: asked,
+    opening: String(opening.result ?? "").slice(0, 2000),
+    openingMs,
+    injectedChars: 0,
+    replies: {},
+    answers: {},
+    tasks: {},
+    recall: {},
+    lookups: { calls: 0 } as any,
+    requests: 0,
+    contextAtTasks: null,
+    contextAtRecall: null,
+    tokensProcessed: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    wallMs: openingMs,
+    notes: [],
+    errors: [],
+    agentCalls: calls,
+  }
+}
+
+async function runOne(meta: Meta, scenario: Scenario, arm: HandoffArm, log: (m: string) => void): Promise<HandoffResult> {
+  const spec = proxyOf(arm)
+  const prompts = JSON.parse(readFileSync(path.join(PROMPTS, `${meta.id}.json`), "utf8"))
+  const asked = await (scenario === "new" ? newWorkPrompt(meta) : Promise.resolve(prompts[scenario] as string))
+  const resume = arm.agent === "manual" ? `${asked}\n\nThis continues an earlier session: run \`eunoe load ${meta.id}\`` : asked
+  const siblings = loadMetas("all").filter((m) => m.repo === meta.repo)
+  const picked = arm.pick ? pickSource(resume, siblings) : meta
+  if (arm.pick && arm.inject !== "multi" && !existsSync(path.join(INJECT, `${picked.id}.${arm.inject}.md`))) await prepareSession(picked, log)
+  const source = arm.allSources ? siblings.map(sessionFile).join(",") : sessionFile(meta)
+  const injectFile = injectFileFor(arm, meta, picked, scenario, resume, siblings)
+  const env: Record<string, string> = { ANTHROPIC_BASE_URL: `http://127.0.0.1:${spec.port}`, ANTHROPIC_CUSTOM_HEADERS: headersFor(arm, meta, injectFile, source).join("\n") }
   if (arm.agent) Object.assign(env, { PATH: `${AGENT_BIN}:${process.env.PATH}`, EUNOE_BENCH_SESSIONS: siblings.map((m) => m.id).join(","), EUNOE_BENCH_LOAD: arm.load ?? "pages" })
   const settings = JSON.stringify({ ...BASE_SETTINGS, autoCompactEnabled: false, env })
   const started = Date.now()
@@ -94,29 +146,32 @@ async function runOne(meta: Meta, scenario: Scenario, arm: HandoffArm, log: (m: 
   const errors: string[] = []
   const opening = await claude(["--session-id", id, ...common], { cwd: meta.cwd, stdin: resume, env, account })
   const openingMs = Date.now() - started
-  if (scenario === "new") {
-    const file = findSessionFile(id, ALL_CONFIG_DIRS) ?? path.join(projectDir(meta.cwd), `${id}.jsonl`)
-    const calls = agentCalls(file)
-    rmSync(file, { force: true })
-    log(`new/${arm.name}: ${calls.length} session commands, ${Math.round(openingMs / 1000)}s`)
-    const none = { lookups: { calls: 0 } as any, requests: 0, contextAtTasks: null, contextAtRecall: null, tokensProcessed: 0, cacheRead: 0, cacheWrite: 0 }
-    return { arm: arm.name, scenario, resumePrompt: asked, opening: String(opening.result ?? "").slice(0, 2000), openingMs, injectedChars: 0, replies: {}, answers: {}, tasks: {}, recall: {}, ...none, wallMs: openingMs, notes: [], errors: [], agentCalls: calls }
-  }
+  if (scenario === "new") return newWorkResult(arm, meta, id, asked, opening, openingMs, log)
   const implicit = meta.facts.filter((f) => f.implicit && f.task)
   const first = await claude(["--resume", id, ...common], { cwd: meta.cwd, stdin: TASKS(implicit), env, account })
   let replies: Record<string, string> = {}
-  try { replies = Object.fromEntries(extractJson(first.result).replies.map((r: any) => [String(r.id), String(r.reply ?? "")])) } catch { errors.push(`tasks: ${String(first.result).slice(0, 200)}`) }
+  try {
+    replies = parseMap(first.result, "replies", "reply")
+  } catch {
+    errors.push(`tasks: ${String(first.result).slice(0, 200)}`)
+  }
   const recallStart = new Date().toISOString()
   const second = await claude(["--resume", id, ...common], { cwd: meta.cwd, stdin: RECALL(meta.facts), env, account })
   const file = findSessionFile(id, ALL_CONFIG_DIRS) ?? path.join(projectDir(meta.cwd), `${id}.jsonl`)
   let answers: Record<string, string> = {}
-  try { answers = Object.fromEntries(extractJson(second.result).answers.map((a: any) => [String(a.id), String(a.answer ?? "")])) } catch { errors.push(`recall: ${String(second.result).slice(0, 200)}`) }
+  try {
+    answers = parseMap(second.result, "answers", "answer")
+  } catch {
+    errors.push(`recall: ${String(second.result).slice(0, 200)}`)
+  }
   const lookups = lookupsAfterQuestion(file, meta.cwd)
   const calls = arm.agent ? agentCalls(file) : undefined
   rmSync(file, { force: true })
   const requests = requestsOf(spec.proxy, id)
   const inputs = requests.filter((r) => r.input)
-  log(`${scenario}/${arm.name}${arm.pick ? ` (picked ${picked.id}${picked.id === meta.id ? "" : ", wrong"})` : ""}${account === "3" ? "" : ` [acct ${account}]`}: ${Object.keys(answers).length} answers, ${Object.keys(replies).length} replies, ${lookups.calls} lookups, ${Math.round((Date.now() - started) / 1000)}s`)
+  log(
+    `${scenario}/${arm.name}${arm.pick ? ` (picked ${picked.id}${picked.id === meta.id ? "" : ", wrong"})` : ""}${account === "3" ? "" : ` [acct ${account}]`}: ${Object.keys(answers).length} answers, ${Object.keys(replies).length} replies, ${lookups.calls} lookups, ${Math.round((Date.now() - started) / 1000)}s`,
+  )
   return {
     arm: arm.name,
     scenario,
@@ -145,29 +200,37 @@ async function runOne(meta: Meta, scenario: Scenario, arm: HandoffArm, log: (m: 
 
 async function runSession(meta: Meta, arms: HandoffArm[], scenarios: Scenario[], tag: string) {
   const log = (m: string) => console.log(`[${meta.id} ${meta.repo}] ${m}`)
-  if (!existsSync(path.join(CANON, `${meta.id}.json`))) { log("no canonical prompt from the planted suite; skipping"); return }
+  if (!existsSync(path.join(CANON, `${meta.id}.json`))) {
+    log("no canonical prompt from the planted suite; skipping")
+    return
+  }
   await prepareSession(meta, log)
   const dir = path.join(RUNS, tag)
   mkdirSync(dir, { recursive: true })
   for (const scenario of scenarios) {
     const todo = arms.filter((a) => !existsSync(path.join(dir, `${meta.id}.${scenario}.${a.name}.json`)))
-    await Promise.all(todo.map(async (arm) => {
-      let result: HandoffResult
-      for (;;) {
-        try { result = await runOne(meta, scenario, arm, log); break } catch (e) {
-          if (!(e instanceof AccountLimited)) throw e
-          log(`${scenario}/${arm.name}: ${e.message}; restarting on account ${chooseAccount()}`)
+    await Promise.all(
+      todo.map(async (arm) => {
+        let result: HandoffResult
+        for (;;) {
+          try {
+            result = await runOne(meta, scenario, arm, log)
+            break
+          } catch (e) {
+            if (!(e instanceof AccountLimited)) throw e
+            log(`${scenario}/${arm.name}: ${e.message}; restarting on account ${chooseAccount()}`)
+          }
         }
-      }
-      writeFileSync(path.join(dir, `${meta.id}.${scenario}.${arm.name}.json`), JSON.stringify(result, null, 2))
-    }))
+        writeFileSync(path.join(dir, `${meta.id}.${scenario}.${arm.name}.json`), JSON.stringify(result, null, 2))
+      }),
+    )
   }
 }
 
 if (import.meta.main) {
   const split = arg("split") ?? "dev"
   const arms = (arg("arms") ?? HANDOFF_ARMS.map((a) => a.name).join(",")).split(",").map(handoffArm)
-  const scenarios = ((arg("scenarios") ?? SCENARIOS.join(",")).split(",")) as Scenario[]
+  const scenarios = (arg("scenarios") ?? SCENARIOS.join(",")).split(",") as Scenario[]
   const metas = loadMetas(split, arg("sessions")?.split(","))
   const parallel = Number(arg("parallel") ?? 2)
   const tag = arg("tag") ?? "main"
@@ -176,14 +239,16 @@ if (import.meta.main) {
   await Bun.sleep(1500)
   try {
     let next = 0
-    await Promise.all(Array.from({ length: parallel }, async () => {
-      while (next < metas.length) {
-        const meta = metas[next++]
-        await runSession(meta, arms, scenarios, tag).catch((e) => console.error(`[${meta.id}]`, e))
-      }
-    }))
+    await Promise.all(
+      Array.from({ length: parallel }, async () => {
+        while (next < metas.length) {
+          const meta = metas[next++]
+          await runSession(meta, arms, scenarios, tag).catch((e) => console.error(`[${meta.id}]`, e))
+        }
+      }),
+    )
   } finally {
-    proxies.forEach((p) => p.kill())
+    for (const p of proxies) p.kill()
   }
   console.log("done")
 }

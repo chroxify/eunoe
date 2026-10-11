@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { isSalient, salientLines } from "../src/context/evidence"
+import { isSalient, salientLines } from "../src/context/fold/evidence"
 
 const MUST_KEEP: Array<[string, string]> = [
   ["deploy id", "Deployment ID: dpl_qgthe6u4p7"],

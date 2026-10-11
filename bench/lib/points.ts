@@ -37,18 +37,60 @@ export function isPromptEntry(entry: Entry) {
   return content.some((block) => block.type === "text" || block.type === "image") && !content.some((block) => block.type === "tool_result")
 }
 
-export const parse = (lines: string[]): Entry[] => lines.map((l) => { try { return JSON.parse(l) } catch { return {} } })
+export const parse = (lines: string[]): Entry[] =>
+  lines.map((l) => {
+    try {
+      return JSON.parse(l)
+    } catch {
+      return {}
+    }
+  })
 
 export function textOf(entry: Entry) {
-  return blocks(entry.message).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n")
+  return blocks(entry.message)
+    .filter((b) => b.type === "text")
+    .map((b) => String(b.text ?? ""))
+    .join("\n")
 }
 
-export const clean = (raw: string) => raw.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<system-message>[\s\S]*?<\/system-message>/g, "").trim()
+export const clean = (raw: string) =>
+  raw
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .replace(/<system-message>[\s\S]*?<\/system-message>/g, "")
+    .trim()
 
 export function realPrompt(entry: Entry) {
   if (!isPromptEntry(entry)) return false
   const p = clean(textOf(entry))
   return Boolean(p) && !p.startsWith("[Request interrupted") && !p.startsWith("<local-command") && !p.startsWith("<command-")
+}
+
+function parseLine(line: string): Entry {
+  try {
+    return JSON.parse(line)
+  } catch {
+    return {}
+  }
+}
+
+function pointOf(dir: string, name: string): Point | null {
+  if (!name.endsWith(".jsonl")) return null
+  const file = path.join(dir, name)
+  const stat = statSync(file)
+  if (stat.size < 1_000_000 || Date.now() - stat.mtimeMs > 60 * 86_400_000) return null
+  const text = readFileSync(file, "utf8")
+  if (!text.includes('"compact_boundary"')) return null
+  const lines = text.split("\n").filter(Boolean)
+  const entries = lines.map(parseLine)
+  const boundaryIndex = entries.findIndex((entry) => entry.subtype === "compact_boundary")
+  const boundary = entries[boundaryIndex]
+  if (boundary?.compactMetadata?.trigger !== "auto") return null
+  const cwd = entries.find((entry) => typeof entry.cwd === "string")?.cwd
+  if (!cwd || !existsSync(cwd)) return null
+  const turnsBefore = entries.slice(0, boundaryIndex).filter(isPromptEntry).length
+  const hasAfter = entries.slice(boundaryIndex).some(isPromptEntry)
+  if (turnsBefore < 8 || !hasAfter) return null
+  return { file, sessionId: name.replace(/\.jsonl$/, ""), cwd, lines, entries, boundaryIndex, preTokens: boundary.compactMetadata.preTokens ?? 0, turnsBefore, mtimeMs: stat.mtimeMs }
 }
 
 export function findPoints(): Point[] {
@@ -57,26 +99,8 @@ export function findPoints(): Point[] {
     for (const project of readdirSync(root)) {
       const dir = path.join(root, project)
       for (const name of readdirSync(dir)) {
-        if (!name.endsWith(".jsonl")) continue
-        const file = path.join(dir, name)
-        const stat = statSync(file)
-        if (stat.size < 1_000_000 || Date.now() - stat.mtimeMs > 60 * 86_400_000) continue
-        const text = readFileSync(file, "utf8")
-        if (!text.includes('"compact_boundary"')) continue
-        const lines = text.split("\n").filter(Boolean)
-        const entries = lines.map((line) => { try { return JSON.parse(line) } catch { return {} } })
-        const boundaryIndex = entries.findIndex((entry) => entry.subtype === "compact_boundary")
-        const boundary = entries[boundaryIndex]
-        if (boundary?.compactMetadata?.trigger !== "auto") continue
-        const cwd = entries.find((entry) => typeof entry.cwd === "string")?.cwd
-        if (!cwd || !existsSync(cwd)) continue
-        const turnsBefore = entries.slice(0, boundaryIndex).filter(isPromptEntry).length
-        const hasAfter = entries.slice(boundaryIndex).some(isPromptEntry)
-        if (turnsBefore < 8 || !hasAfter) continue
-        points.push({
-          file, sessionId: name.replace(/\.jsonl$/, ""), cwd, lines, entries, boundaryIndex,
-          preTokens: boundary.compactMetadata.preTokens ?? 0, turnsBefore, mtimeMs: stat.mtimeMs,
-        })
+        const point = pointOf(dir, name)
+        if (point) points.push(point)
       }
     }
   }

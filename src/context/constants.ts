@@ -1,46 +1,23 @@
 export const SUMMARY_COMMAND_CHARS = 100
 export const SUMMARY_ARGUMENT_CHARS = 60
-export const SUMMARY_LAST_WORDS_CHARS = 600
-export const SUMMARY_CALLS_SHOWN = 20
-export const TURN_FINGERPRINT_CHARS = 24
 
-export const CLEARED_INPUT_THRESHOLD = 2_000
-export const CLEARED_INPUT_KEPT = 500
+export const CLEARED_OUTPUT = "[Output cleared to keep the context within its limit. It is in the full transcript: search there for this call.]"
 
-export const REMINDER_ONLY = /^\s*(?:<system-reminder>[\s\S]*?<\/system-reminder>\s*)+$/
-export const RECALL_REMINDERS = /<(system-reminder|system-message|recalled-context|tool-evidence)>[\s\S]*?<\/\1>/g
-export const FOLD_REMINDERS = /<(system-reminder|system-message|recalled-context)(?:\s[^>]*)?>[\s\S]*?<\/\1>/g
-
-export const REREADABLE_TOOLS = new Set(["Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch", "TodoWrite", "Edit", "Write", "MultiEdit", "NotebookEdit"])
-export const EVIDENCE_LINES_PER_CALL = 12
-export const EVIDENCE_LINE_CHARS = 220
-export const EVIDENCE_TURN_CHARS = 4_000
-export const EVIDENCE_SCAN_LINES = 1_000_000
-export const EVIDENCE_MIN_SCORE = 2
-export const EVIDENCE_RANKED = true
-export const EVIDENCE_LABELS = true
-export const EVIDENCE_CALL_FLOOR = 2
-export const ERROR_LINE = /\b(?:error|errors|fail|fails|failed|failure|fatal|exception|panic|denied|refused|timed? ?out|traceback|cannot|unable to)\b/i
-export const ERROR_CODE = /\b[A-Z][A-Z0-9]*_[A-Z0-9_]{2,}\b|\bSIG[A-Z]{2,}\d*\b|\b[A-Z]{2,}\d{2,}\b|\bE(?:NOENT|ACCES|PERM|EXIST|CONN(?:REFUSED|RESET|ABORTED)|PIPE|ADDRINUSE|TIMEDOUT|NOTFOUND|INVAL|BUSY|MFILE|AGAIN|HOSTUNREACH|NOTDIR|ISDIR|BADF|NOSPC|AI_[A-Z]+)\b/
-export const VALUE_TOKEN = /\b[a-z]{2,}[_-](?=[a-z0-9]*\d)[a-z0-9]{6,}\b|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b|https?:\/\/[^\s)"']+|\b\d{4,}\b|\b\d{6,}_[a-z0-9_]{3,}\b|\bv?\d+\.\d+\.\d+\b|\b\d+(?:\.\d+)?\s?(?:ms|s|[KMGT]i?B|kB|%)(?![a-z])|\bsha\d*:[0-9a-f]+|@[a-z][\w-]+|--[a-z][\w-]*=\S+|\b\d+ (?:pass(?:ed|ing)?|fail(?:ed|ing)?|tests?|files? changed|insertions?|deletions?|rows?|errors?|warnings?)\b|[$€£]\d+(?:[.,]\d+)?|\b(?:status|HTTP\/\d(?:\.\d)?)\s*[:=]?\s*[45]\d{2}\b|\bexit(?: code| status)?\s*[:=]?\s*(?!0\b)\d{1,3}\b/i
-export const ID_TOKEN = /\b[a-z]{2,}[_-](?=[a-z0-9]*\d)[a-z0-9]{6,}\b|\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b|https?:\/\/[^\s)"']+|\b\d{6,}_[a-z0-9_]{3,}\b|\bv?\d+\.\d+\.\d+\b|\bsha\d*:[0-9a-f]+|@[a-z][\w-]+|--[a-z][\w-]*=\S+/i
-export const KEY_VALUE = /^[\w .\-/()]{2,48}[:=]\s*\S/
-export const VALUE_LABEL = /\b(?:ids?|hash|sha(?:256)?|checksum|trace|deploy(?:ment)?|preview|url|version|rows|p9[59]|exit(?: code)?|signal|request[_-]?id|job|migration|applied|bundle|build|status|took|updated|created)\b/i
-
-export const RECALL_WINDOW_LINES = 6
-export const RECALL_SHOWN_LINES = 8
-export const RECALL_PER_QUERY = 12
-export const RECALL_MAX_CHARS = 18_000
-export const RECALL_MAX_CHARS_MULTI = 30_000
-export const RECALL_MIN_TERMS = 2
-export const RECALL_SALIENT_EXCERPT = true
-export const RECALL_NARRATIVE = true
-export const RECALL_LINE_CHARS = 240
-export const RECALL_RERANK_CANDIDATES = 30
-export const BM25_K1 = 1.2
-export const BM25_B = 0.75
-export const STOPWORDS = new Set("the and for with that this what which when where who how was were did does done from into onto have has had you your our out not but are can could would should will just then than them they there their its it's about after before again also any each other some such only own same very more most over under while because been being into".split(" "))
-
-export const RERANK_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
-export const RERANK_TIMEOUT_MS = 4_000
-export const RERANK_LINE_CHARS = 240
+export const SESSIONS_SECTION = [
+  "# Earlier sessions in this project",
+  "",
+  "eunoe keeps the full record of this project's earlier Claude Code sessions, and the user expects you to use it the way a colleague who was there would. When they point you at one, skipping it is the failure to avoid: you will redo finished work, break rules the user already set, and ask for things they already told you.",
+  "",
+  "## When",
+  "",
+  'Use these when the user tells you to (`eunoe load <id>` in their message), or when they refer to earlier work you have no context for: a plan, a todo, "the thing we talked about", "where we left off". `eunoe sessions <key words>` lists the closest earlier sessions, newest first, each with its first and last request; if one clearly continues into this message, load it, otherwise ask which they mean. Do not go looking for work that is clearly new and unrelated.',
+  "",
+  "## How",
+  "",
+  "1. `eunoe load <id>` writes that whole session to a file and prints its path. Read the file with the Read tool from the first line to the last, in as many Read calls as its length needs, before you act. Do not grep, head, tail or sed it, and do not stop partway: the rules, values and open todos you need are spread across all of it.",
+  "2. Only then start the work. Follow what the record establishes: the user's rules and preferences, decisions made, what was finished and what was left for later. Its values (ids, versions, names, commands) are exact.",
+  "",
+  "`eunoe peek <id> <words>` returns just the excerpts of a session that match, for a single fact such as an error message or a value. It is not a substitute for loading when the message continues that session's work.",
+  "",
+  "Don't tell the user you are doing this or ask permission; just do it and carry on with their request.",
+].join("\n")

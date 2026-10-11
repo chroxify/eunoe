@@ -1,12 +1,12 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { paths } from "../../config/constants"
-import { FOLD_CAP_CHARS } from "../../context/constants"
 import { foldedView } from "../../context/fold"
-import type { SessionCandidate } from "../session-source"
 import { candidateOf, candidatesHere, shortId, titleOf } from "../sessions"
+import { FOLD_CAP_CHARS } from "../sessions/constants"
+import type { SessionCandidate } from "../sessions/types"
+import { line } from "../terminal/ui"
 import type { Command } from "../types"
-import { line } from "../ui"
 
 export function writeLoaded(cand: SessionCandidate): { file: string; lines: number; chars: number } {
   const text = foldedView(cand.messages, FOLD_CAP_CHARS)
@@ -29,7 +29,10 @@ export const load: Command = {
     "end. Ids come from eunoe sessions; a unique prefix is enough.",
   ],
   run(args) {
-    const cand = candidateOf(args.find((a) => !a.startsWith("-")), candidatesHere())
+    const cand = candidateOf(
+      args.find((a) => !a.startsWith("-")),
+      candidatesHere(),
+    )
     line(loadedLine(cand, writeLoaded(cand)))
   },
 }

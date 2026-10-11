@@ -288,7 +288,7 @@ index, ~15 s per 1k chunks); not wired yet.
 ### Status
 
 
-- Jev reranking is wired into the proxy (`src/context/rerank.ts`,
+- Jev reranking is wired into the proxy (`src/context/recall/rerank.ts`,
   `eval.rerank`, key from `TYPESAFE_API_KEY` or `~/.eunoe/typesafe-key`;
   the lexical order is used unchanged if the call fails or exceeds 4 s).
   `rolling+both3` end to end: dev 100% recall (0 unknown, 0 wrong, 140k

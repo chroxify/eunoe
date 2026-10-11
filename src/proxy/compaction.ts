@@ -1,11 +1,11 @@
-import { CLEARED_OUTPUT } from "../context/prompts"
-import { clearToolResults, compactMessages, countToolResults } from "../context/strategies"
-import { splitTurns, turnFingerprint } from "../context/turns"
+import { CLEARED_OUTPUT } from "../context/constants"
+import { capTurns, clearToolResults, compactMessages, countToolResults } from "../context/fold/strategies"
+import { splitTurns, turnFingerprint } from "../context/fold/turns"
+import type { Message } from "../context/types"
 import { DEFAULT_RATIO, PROTECTED_OUTPUTS } from "./constants"
 import { estimator, targetSize } from "./estimate"
 import { resetCut } from "./state"
-import type { Message } from "../context/types"
-import type { CompactInput, CompactResult } from "./types"
+import type { CompactInput, CompactResult, ThreadState } from "./types"
 
 function settledCut(turns: Message[][], index: number) {
   let cut = index
@@ -13,34 +13,74 @@ function settledCut(turns: Message[][], index: number) {
   return cut
 }
 
-export function compact({ body, config, state, window, guide, mayCompact, omittedBefore = 0, decorate = (m) => m }: CompactInput): CompactResult {
-  const { turns } = splitTurns(body.messages)
-  let stateChanged = false
-
+function resolveCut(turns: Message[][], state: ThreadState, config: CompactInput["config"], rollingKeep: number | undefined) {
   let cutIndex = state.cut ? turns.findIndex((turn) => turnFingerprint(turn) === state.cut) : -1
+  let stateChanged = false
   if (state.cut && cutIndex === -1) {
     resetCut(state)
     stateChanged = true
   }
-  const rolling = config.eval?.rolling ?? (config.mode === "default" ? { keep: config.keep, budget: config.budget } : undefined)
   if (cutIndex <= 0 && config.eval?.forceCut && turns.length >= 3) {
-    const forced = settledCut(turns, Math.max(1, turns.length - 1 - (rolling?.keep ?? 1)))
-    cutIndex = forced
-    state.cut = turnFingerprint(turns[forced])
+    cutIndex = settledCut(turns, Math.max(1, turns.length - 1 - (rollingKeep ?? 1)))
+    state.cut = turnFingerprint(turns[cutIndex])
     stateChanged = true
   }
+  return { cutIndex, stateChanged }
+}
+
+function shrinkOnce(state: ThreadState, cutIndex: number, configuredKeep: number, liveResults: () => number): string {
+  const keep = Math.min(state.keep ?? configuredKeep, cutIndex - 1)
+  if (cutIndex > 0 && keep > 0) {
+    state.keep = keep - 1
+    return `keep=${state.keep}`
+  }
+  const remaining = liveResults() - (state.cleared ?? 0) - PROTECTED_OUTPUTS
+  if (remaining <= 0) return "stuck"
+  state.cleared = (state.cleared ?? 0) + Math.ceil(remaining / 2)
+  return `cleared=${state.cleared}`
+}
+
+function dueRoll(turns: Message[][], cutIndex: number, rolling: { keep: number; budget: number }, size: ReturnType<typeof estimator>): number | null {
+  const next = settledCut(turns, turns.length - 1 - rolling.keep)
+  const backlog = size.of(turns.slice(Math.max(cutIndex, 0), Math.max(next, 0)).flat()) - size.fixed
+  return next >= 1 && next > cutIndex && backlog > rolling.budget ? next : null
+}
+
+function shrinkToTarget(over: () => boolean, step: () => string, actions: string[], rebuild: () => void) {
+  while (over()) {
+    const action = step()
+    actions.push(action)
+    if (action === "stuck") return
+    rebuild()
+  }
+}
+
+export function compact({ body, config, state, window, guide, mayCompact, omittedBefore = 0, decorate = (m) => m, reduce }: CompactInput): CompactResult {
+  const { turns } = splitTurns(body.messages)
+  const rolling = config.eval?.rolling ?? (config.mode === "default" ? { keep: config.keep, budget: config.budget } : undefined)
+  const resolved = resolveCut(turns, state, config, rolling?.keep)
+  let cutIndex = resolved.cutIndex
+  let stateChanged = resolved.stateChanged
 
   const configuredKeep = config.keepTurns === "all" ? Number.MAX_SAFE_INTEGER : config.keepTurns
-  const liveLength = () => turns.slice(Math.max(cutIndex, 0)).flat().length
-  const compacted = () => cutIndex > 0
-    ? compactMessages(body.messages, cutIndex, { keepTurns: state.keep ?? configuredKeep, guide, omittedBefore, evidence: config.eval?.evidence ?? true })
-    : body.messages
+  const ratio = state.ratio ?? DEFAULT_RATIO
+  const options = { guide, omittedBefore, evidence: config.eval?.evidence ?? true, reduce, capChars: config.turnCap === "off" ? undefined : config.turnCap / ratio }
+  const liveStart = (list: Message[]) =>
+    list.length -
+    splitTurns(list)
+      .turns.slice(-(turns.length - Math.max(cutIndex, 0)))
+      .flat().length
+  const compacted = () => capTurns(cutIndex > 0 ? compactMessages(body.messages, cutIndex, { ...options, keepTurns: state.keep ?? configuredKeep }) : body.messages, { ...options, keepTurns: 0 })
   const build = () => {
     const messages = compacted()
-    return state.cleared ? clearToolResults(messages, messages.length - liveLength(), state.cleared, CLEARED_OUTPUT) : messages
+    return state.cleared ? clearToolResults(messages, liveStart(messages), state.cleared, CLEARED_OUTPUT) : messages
+  }
+  const liveResults = () => {
+    const unclearedLive = compacted()
+    return countToolResults(unclearedLive, liveStart(unclearedLive))
   }
 
-  const size = estimator(body, state.ratio ?? DEFAULT_RATIO)
+  const size = estimator(body, ratio)
   const limit = window ? config.compactAt * window : Number.POSITIVE_INFINITY
   const target = window ? targetSize(size, window) : Number.POSITIVE_INFINITY
 
@@ -48,45 +88,32 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
   let estimate = size.of(decorate(messages))
   const actions: string[] = []
   const current = turns.length - 1
+  const rebuild = () => {
+    messages = build()
+    estimate = size.of(decorate(messages))
+  }
   const moveCut = (index: number, action: string) => {
     cutIndex = index
     resetCut(state)
     state.cut = turnFingerprint(turns[index])
     actions.push(action)
-    messages = build()
-    estimate = size.of(decorate(messages))
+    rebuild()
   }
 
-  if (mayCompact && rolling) {
-    const next = settledCut(turns, current - rolling.keep)
-    const backlog = size.of(turns.slice(Math.max(cutIndex, 0), Math.max(next, 0)).flat()) - size.fixed
-    if (next >= 1 && next > cutIndex && backlog > rolling.budget) {
-      moveCut(next, "roll")
-      stateChanged = true
-    }
+  const roll = mayCompact && rolling ? dueRoll(turns, cutIndex, rolling, size) : null
+  if (roll !== null) {
+    moveCut(roll, "roll")
+    stateChanged = true
   }
 
   if (mayCompact && estimate > limit) {
     if (current > 0 && current > cutIndex) moveCut(current, "cut")
-    while (estimate > target) {
-      const keep = Math.min(state.keep ?? configuredKeep, cutIndex - 1)
-      if (cutIndex > 0 && keep > 0) {
-        state.keep = keep - 1
-        actions.push(`keep=${state.keep}`)
-      } else {
-        const unclearedLive = compacted()
-        const total = countToolResults(unclearedLive, unclearedLive.length - liveLength())
-        const remaining = total - (state.cleared ?? 0) - PROTECTED_OUTPUTS
-        if (remaining <= 0) {
-          actions.push("stuck")
-          break
-        }
-        state.cleared = (state.cleared ?? 0) + Math.ceil(remaining / 2)
-        actions.push(`cleared=${state.cleared}`)
-      }
-      messages = build()
-      estimate = size.of(decorate(messages))
-    }
+    shrinkToTarget(
+      () => estimate > target,
+      () => shrinkOnce(state, cutIndex, configuredKeep, liveResults),
+      actions,
+      rebuild,
+    )
     stateChanged = true
   }
 
@@ -96,7 +123,7 @@ export function compact({ body, config, state, window, guide, mayCompact, omitte
     note: {
       action: cutIndex > 0 ? "compact" : "full",
       compacted: actions.includes("cut") || actions.includes("roll"),
-      actions: actions.length ? actions : undefined,
+      actions: actions.length > 0 ? actions : undefined,
       cutTurn: cutIndex > 0 ? cutIndex : null,
       keep: state.keep,
       cleared: state.cleared,

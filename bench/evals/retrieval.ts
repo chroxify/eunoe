@@ -1,16 +1,20 @@
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
+import { rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
+import type { RecallChunk, RecallPick } from "../../src/context/recall/types"
 import { claude } from "../lib/claude"
 import { COMPONENTS, NO_TOOLS, OUT, TOOL_FACTS } from "../lib/constants"
-import { rank, recallChunks, renderRecall, terms } from "../../src/context/recall"
-import type { RecallChunk, RecallPick } from "../../src/context/types"
-import { Tally, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
+import { keyTokens, mentions, plantedSessions, realPoints, Tally } from "../lib/data"
 import { jev, jevStats } from "../lib/jev"
-import { CROSS_ENCODERS, EMBEDDERS, EMBED_CACHE, JEV_TERM_POOL, PARAPHRASE, PARAPHRASE_FILE, PLANTED_KEYS, REAL_KEYS, RETRIEVAL_ARM_FILTER, RETRIEVAL_CANDIDATES, RETRIEVAL_TOP } from "./constants"
+import { CROSS_ENCODERS, EMBED_CACHE, EMBEDDERS, JEV_TERM_POOL, PARAPHRASE, PARAPHRASE_FILE, PLANTED_KEYS, REAL_KEYS, RETRIEVAL_ARM_FILTER, RETRIEVAL_CANDIDATES, RETRIEVAL_TOP } from "./constants"
 
 type Ranker = (question: string, chunks: RecallChunk[], corpusKey: string) => Promise<number[]>
-interface Arm { name: string; rank: Ranker; prepare?: (chunks: RecallChunk[], corpusKey: string) => Promise<void> }
+interface Arm {
+  name: string
+  rank: Ranker
+  prepare?: (chunks: RecallChunk[], corpusKey: string) => Promise<void>
+}
 
 const split = process.argv[2] ?? "all"
 
@@ -59,7 +63,7 @@ async function docVectors(key: string, chunks: RecallChunk[], corpusKey: string)
     vectors = await embed(key, chunks.map(chunkText), EMBEDDERS[key].doc)
     const d = vectors[0]?.length ?? 0
     const flat = new Float32Array(vectors.length * d)
-    vectors.forEach((v, i) => flat.set(v, i * d))
+    for (const [i, v] of vectors.entries()) flat.set(v, i * d)
     writeFileSync(file, Buffer.from(flat.buffer))
     indexMs.set(key, (indexMs.get(key) ?? 0) + Date.now() - t0)
     indexed.set(key, (indexed.get(key) ?? 0) + chunks.length)
@@ -68,13 +72,20 @@ async function docVectors(key: string, chunks: RecallChunk[], corpusKey: string)
   return vectors
 }
 
-const dot = (a: Float32Array, b: Float32Array) => { let s = 0; for (let i = 0; i < a.length; i += 1) s += a[i] * b[i]; return s }
+const dot = (a: Float32Array, b: Float32Array) => {
+  let s = 0
+  for (let i = 0; i < a.length; i += 1) s += a[i] * b[i]
+  return s
+}
 
 function denseRank(key: string): Ranker {
   return async (question, chunks, corpusKey) => {
     const docs = await docVectors(key, chunks, corpusKey)
     const [q] = await embed(key, [question], EMBEDDERS[key].query)
-    return docs.map((v, index) => ({ index, score: dot(q, v) })).sort((a, b) => b.score - a.score).map((r) => r.index)
+    return docs
+      .map((v, index) => ({ index, score: dot(q, v) }))
+      .sort((a, b) => b.score - a.score)
+      .map((r) => r.index)
   }
 }
 
@@ -84,7 +95,7 @@ function bm25Rank(minTerms = 1): Ranker {
 
 function rrf(lists: number[][], k = 60): number[] {
   const score = new Map<number, number>()
-  for (const list of lists) list.forEach((index, r) => score.set(index, (score.get(index) ?? 0) + 1 / (k + r + 1)))
+  for (const list of lists) for (const [r, index] of list.entries()) score.set(index, (score.get(index) ?? 0) + 1 / (k + r + 1))
   return [...score.entries()].sort((a, b) => b[1] - a[1]).map(([i]) => i)
 }
 
@@ -107,22 +118,30 @@ async function crossEncoder(key: string) {
 function ceRerank(key: string, base: Ranker = bm25Rank()): Ranker {
   return async (question, chunks, corpusKey) => {
     const candidates = (await base(question, chunks, corpusKey)).slice(0, RETRIEVAL_CANDIDATES)
-    if (!candidates.length) return []
+    if (candidates.length === 0) return []
     const { tokenizer, model } = await crossEncoder(key)
     const scores: number[] = []
     for (let i = 0; i < candidates.length; i += 16) {
       const batch = candidates.slice(i, i + 16)
-      const inputs = tokenizer(batch.map(() => question), { text_pair: batch.map((c) => chunkText(chunks[c])), padding: true, truncation: true, max_length: 384 })
+      const inputs = tokenizer(
+        batch.map(() => question),
+        { text_pair: batch.map((c) => chunkText(chunks[c])), padding: true, truncation: true, max_length: 384 },
+      )
       const { logits } = await model(inputs)
       const [n, d] = logits.dims
       for (let r = 0; r < n; r += 1) scores.push(d === 1 ? logits.data[r] : logits.data[r * d + d - 1])
     }
-    return candidates.map((index, i) => ({ index, score: scores[i] })).sort((a, b) => b.score - a.score).map((r) => r.index)
+    return candidates
+      .map((index, i) => ({ index, score: scores[i] }))
+      .sort((a, b) => b.score - a.score)
+      .map((r) => r.index)
   }
 }
 
 const llmCache: Record<string, Record<string, number[]>> = {}
-function llmCacheFile(model: string) { return path.join(COMPONENTS, `rerank-cache.${model.replace(/[^\w.-]/g, "_")}.json`) }
+function llmCacheFile(model: string) {
+  return path.join(COMPONENTS, `rerank-cache.${model.replace(/[^\w.-]/g, "_")}.json`)
+}
 async function llmPick(model: string, question: string, chunks: RecallChunk[], candidates: number[], pick: number, call: (prompt: string) => Promise<string>): Promise<number[]> {
   const file = llmCacheFile(model)
   llmCache[model] ??= existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {}
@@ -131,7 +150,10 @@ async function llmPick(model: string, question: string, chunks: RecallChunk[], c
   const listing = candidates.map((index, n) => `### ${n}\n[turn ${chunks[index].turn}] ${chunks[index].call}\n${chunks[index].lines.map((l) => l.slice(0, 240)).join("\n")}`).join("\n\n")
   const prompt = `A developer is asking a question about an earlier part of a coding session. Below are numbered excerpts of tool output and agent notes from that session. Return the numbers of up to ${pick} excerpts most likely to contain the exact answer, best first, as a JSON array of integers and nothing else. Return [] if none could.\n\nQuestion: ${question}\n\n${listing}`
   const text = await call(prompt)
-  const picked = (JSON.parse(text.match(/\[[^\]]*\]/)?.[0] ?? "[]") as number[]).filter((n) => Number.isInteger(n) && n >= 0 && n < candidates.length).slice(0, pick).map((n) => candidates[n])
+  const picked = (JSON.parse(text.match(/\[[^\]]*\]/)?.[0] ?? "[]") as number[])
+    .filter((n) => Number.isInteger(n) && n >= 0 && n < candidates.length)
+    .slice(0, pick)
+    .map((n) => candidates[n])
   llmCache[model][key] = picked
   writeFileSync(file, JSON.stringify(llmCache[model]))
   llmCalls.set(model, (llmCalls.get(model) ?? 0) + 1)
@@ -155,7 +177,7 @@ async function ollama(model: string, prompt: string): Promise<string> {
 function llmRerank(label: string, call: (prompt: string) => Promise<string>, pick = 4, base: Ranker = bm25Rank()): Ranker {
   return async (question, chunks, corpusKey) => {
     const candidates = (await base(question, chunks, corpusKey)).slice(0, RETRIEVAL_CANDIDATES)
-    if (!candidates.length) return []
+    if (candidates.length === 0) return []
     const picked = await llmPick(label, question, chunks, candidates, pick, call)
     return [...picked, ...candidates.filter((c) => !picked.includes(c))]
   }
@@ -165,7 +187,7 @@ function jevRerank(model: string, base: Ranker = bm25Rank()): Ranker {
   const label = model
   return async (question, chunks, corpusKey) => {
     const candidates = (await base(question, chunks, corpusKey)).slice(0, RETRIEVAL_CANDIDATES)
-    if (!candidates.length) return []
+    if (candidates.length === 0) return []
     const file = llmCacheFile(label)
     llmCache[label] ??= existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {}
     const key = `${question}\n${candidates.map((i) => `${chunks[i].turn}:${chunks[i].call}:${chunks[i].lines[0]}`).join("|")}`
@@ -190,7 +212,11 @@ const rewriteCache: Record<string, string> = existsSync(path.join(COMPONENTS, "r
 async function rewritten(model: string, question: string): Promise<string> {
   const key = `${model}\n${question}`
   if (!rewriteCache[key]) {
-    rewriteCache[key] = await anthropic(model, `A developer asks a question about an earlier coding session. Write the words most likely to appear in the exact command output or log line that answers it: command names, flags, file names, identifiers, error words, units. One line, 8–20 words, no punctuation, no explanation.\n\nQuestion: ${question}`, 80)
+    rewriteCache[key] = await anthropic(
+      model,
+      `A developer asks a question about an earlier coding session. Write the words most likely to appear in the exact command output or log line that answers it: command names, flags, file names, identifiers, error words, units. One line, 8–20 words, no punctuation, no explanation.\n\nQuestion: ${question}`,
+      80,
+    )
     writeFileSync(path.join(COMPONENTS, "rewrite-cache.json"), JSON.stringify(rewriteCache))
     llmCalls.set(`rewrite:${model}`, (llmCalls.get(`rewrite:${model}`) ?? 0) + 1)
   }
@@ -202,12 +228,23 @@ async function jevRewritten(question: string, chunks: RecallChunk[]): Promise<st
   if (!rewriteCache[key]) {
     const df = new Map<string, number>()
     for (const c of chunks) for (const t of new Set(c.terms)) df.set(t, (df.get(t) ?? 0) + 1)
-    const pool = [...df.entries()].filter(([t, n]) => n >= 2 && n <= chunks.length / 4 && t.length >= 4).sort((a, b) => b[1] - a[1]).slice(0, 400).map(([t]) => t)
+    const pool = [...df.entries()]
+      .filter(([t, n]) => n >= 2 && n <= chunks.length / 4 && t.length >= 4)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 400)
+      .map(([t]) => t)
     const chosen: string[] = []
     for (let i = 0; i < pool.length; i += JEV_TERM_POOL) {
       const block = pool.slice(i, i + JEV_TERM_POOL)
-      const answers = await jev("jev-latest", `Question from a developer about an earlier coding session: "${question}"`, Object.fromEntries(block.map((t) => [t.replace(/[^\w]/g, "_"), { type: "noul", instructions: `The term "${t}" is likely to appear in the exact command output or log line that answers the question` }])))
-      for (const t of block) { const a = answers[t.replace(/[^\w]/g, "_")]; if (a && a.type === "noul" && a.noul >= 0.6) chosen.push(t) }
+      const answers = await jev(
+        "jev-latest",
+        `Question from a developer about an earlier coding session: "${question}"`,
+        Object.fromEntries(block.map((t) => [t.replace(/[^\w]/g, "_"), { type: "noul", instructions: `The term "${t}" is likely to appear in the exact command output or log line that answers the question` }])),
+      )
+      for (const t of block) {
+        const a = answers[t.replace(/[^\w]/g, "_")]
+        if (a && a.type === "noul" && a.noul >= 0.6) chosen.push(t)
+      }
     }
     rewriteCache[key] = chosen.slice(0, 20).join(" ")
     writeFileSync(path.join(COMPONENTS, "rewrite-cache.json"), JSON.stringify(rewriteCache))
@@ -228,7 +265,11 @@ function rewriteThenBm25(model: string): Ranker {
   return async (question, chunks) => {
     const key = `${model}\n${question}`
     if (!rewriteCache[key]) {
-      rewriteCache[key] = await anthropic(model, `A developer asks a question about an earlier coding session. Write the words most likely to appear in the exact command output or log line that answers it: command names, flags, file names, identifiers, error words, units. One line, 8–20 words, no punctuation, no explanation.\n\nQuestion: ${question}`, 80)
+      rewriteCache[key] = await anthropic(
+        model,
+        `A developer asks a question about an earlier coding session. Write the words most likely to appear in the exact command output or log line that answers it: command names, flags, file names, identifiers, error words, units. One line, 8–20 words, no punctuation, no explanation.\n\nQuestion: ${question}`,
+        80,
+      )
       writeFileSync(path.join(COMPONENTS, "rewrite-cache.json"), JSON.stringify(rewriteCache))
       llmCalls.set(`rewrite:${model}`, (llmCalls.get(`rewrite:${model}`) ?? 0) + 1)
     }
@@ -257,11 +298,29 @@ const ARMS: Arm[] = [
   { name: "haiku rewrite → bm25 → jev", rank: jevRerank("jev-latest", rewriteThenBm25("claude-haiku-4-5-20251001")) },
   { name: "jev rewrite → bm25", rank: jevRewriteThen(bm25Rank()) },
   { name: "jev rewrite → hybrid:e5-small → jev", rank: jevRerank("jev-latest", jevRewriteThen(hybrid("e5-small"))) },
-  ...(process.env.OLLAMA_MODELS ?? "").split(",").filter(Boolean).map((m) => ({ name: `ollama:${m} rerank`, rank: llmRerank(`ollama_${m}`, (p) => ollama(m, p)) })),
-  ...(process.env.JEV_MODELS ?? "jev-latest").split(",").filter(Boolean).flatMap((m) => [{ name: `${m} rerank`, rank: jevRerank(m) }, { name: `${m} rerank over hybrid:bge-small`, rank: jevRerank(m, hybrid("bge-small")) }, { name: `${m} rerank over hybrid:e5-small`, rank: jevRerank(m, hybrid("e5-small")) }]),
-].filter((a) => !RETRIEVAL_ARM_FILTER.length || RETRIEVAL_ARM_FILTER.includes(a.name))
+  ...(process.env.OLLAMA_MODELS ?? "")
+    .split(",")
+    .filter(Boolean)
+    .map((m) => ({ name: `ollama:${m} rerank`, rank: llmRerank(`ollama_${m}`, (p) => ollama(m, p)) })),
+  ...(process.env.JEV_MODELS ?? "jev-latest")
+    .split(",")
+    .filter(Boolean)
+    .flatMap((m) => [
+      { name: `${m} rerank`, rank: jevRerank(m) },
+      { name: `${m} rerank over hybrid:bge-small`, rank: jevRerank(m, hybrid("bge-small")) },
+      { name: `${m} rerank over hybrid:e5-small`, rank: jevRerank(m, hybrid("e5-small")) },
+    ]),
+].filter((a) => RETRIEVAL_ARM_FILTER.length === 0 || RETRIEVAL_ARM_FILTER.includes(a.name))
 
-interface Ask { question: string; original?: string; hit: (text: string) => boolean; type: string; corpusKey: string; chunks: RecallChunk[]; planted: boolean }
+interface Ask {
+  question: string
+  original?: string
+  hit: (text: string) => boolean
+  type: string
+  corpusKey: string
+  chunks: RecallChunk[]
+  planted: boolean
+}
 const asks: Ask[] = []
 for (const session of plantedSessions(split === "all" ? undefined : split)) {
   const chunks = recallChunks([...session.messages, { role: "user", content: "" }], new Map())
@@ -285,15 +344,27 @@ for (const point of realPoints()) {
 const paraphrases: Record<string, string> = existsSync(PARAPHRASE_FILE) ? JSON.parse(readFileSync(PARAPHRASE_FILE, "utf8")) : {}
 if (PARAPHRASE) {
   for (const ask of asks) {
-    const source = ask.chunks.filter((c) => ask.hit(c.lines.join("\n"))).map(chunkText).join("\n---\n").slice(0, 3_000)
+    const source = ask.chunks
+      .filter((c) => ask.hit(c.lines.join("\n")))
+      .map(chunkText)
+      .join("\n---\n")
+      .slice(0, 3_000)
     const key = createHash("sha1").update(`${ask.question}\u0000${source}`).digest("hex").slice(0, 16)
     if (!paraphrases[key]) {
       const avoid = [...new Set([...terms(ask.question), ...terms(source)])].join(" ")
       let text = ""
       for (let attempt = 0; attempt < 3 && !text; attempt += 1) {
-        const candidate = (await anthropic("claude-opus-5-5", `A developer is asking their coding agent about something from much earlier in a long session. Rewrite the question below the way a person would actually phrase it from vague memory: casual, hedged, describing the situation in everyday words rather than naming it. Keep the meaning so the same fact answers it. Hard rule: do not use any of these words or obvious variants of them: ${avoid}\n\nQuestion: ${ask.question}\n\nRewritten question only, one line.`, 600)).trim().replace(/^"|"$/g, "")
+        const candidate = (
+          await anthropic(
+            "claude-opus-5-5",
+            `A developer is asking their coding agent about something from much earlier in a long session. Rewrite the question below the way a person would actually phrase it from vague memory: casual, hedged, describing the situation in everyday words rather than naming it. Keep the meaning so the same fact answers it. Hard rule: do not use any of these words or obvious variants of them: ${avoid}\n\nQuestion: ${ask.question}\n\nRewritten question only, one line.`,
+            600,
+          )
+        )
+          .trim()
+          .replace(/^"|"$/g, "")
         const overlap = terms(candidate).filter((t) => avoid.split(" ").includes(t))
-        if (!overlap.length || attempt === 2) text = candidate
+        if (overlap.length === 0 || attempt === 2) text = candidate
       }
       paraphrases[key] = text
       writeFileSync(PARAPHRASE_FILE, JSON.stringify(paraphrases, null, 1))
@@ -304,7 +375,9 @@ if (PARAPHRASE) {
   const overlapping = asks.filter((a) => terms(a.question).some((t) => a.chunks.filter((c) => a.hit(c.lines.join("\n"))).some((c) => terms(chunkText(c)).includes(t)))).length
   console.error(`paraphrased ${asks.length} questions; ${overlapping} still share a content term with their source chunk`)
 }
-console.error(`${asks.length} questions (${asks.filter((a) => a.planted).length} planted, ${asks.filter((a) => !a.planted).length} real), ${[...new Set(asks.map((a) => a.corpusKey))].length} corpora, ${[...new Map(asks.map((a) => [a.corpusKey, a.chunks.length])).values()].reduce((s, n) => s + n, 0)} chunks; arms: ${ARMS.map((a) => a.name).join(", ")}`)
+console.error(
+  `${asks.length} questions (${asks.filter((a) => a.planted).length} planted, ${asks.filter((a) => !a.planted).length} real), ${[...new Set(asks.map((a) => a.corpusKey))].length} corpora, ${[...new Map(asks.map((a) => [a.corpusKey, a.chunks.length])).values()].reduce((s, n) => s + n, 0)} chunks; arms: ${ARMS.map((a) => a.name).join(", ")}`,
+)
 
 const results: Record<string, { planted: Tally; real: Tally; cand12: Tally; cand30: Tally; ms: number[]; chars: number[] }> = {}
 for (const arm of ARMS) {
@@ -314,7 +387,12 @@ for (const arm of ARMS) {
   for (const ask of asks) {
     const t0 = performance.now()
     let ranked: number[]
-    try { ranked = await arm.rank(ask.question, ask.chunks, ask.corpusKey) } catch (e) { console.error(`${arm.name}: ${String(e).slice(0, 200)}`); break }
+    try {
+      ranked = await arm.rank(ask.question, ask.chunks, ask.corpusKey)
+    } catch (e) {
+      console.error(`${arm.name}: ${String(e).slice(0, 200)}`)
+      break
+    }
     r.ms.push(performance.now() - t0)
     const holds = (i: number) => ask.hit(ask.chunks[i].lines.join("\n"))
     r.cand12.add(ask.planted ? "planted" : "real", ranked.slice(0, RETRIEVAL_TOP).some(holds))
@@ -332,25 +410,44 @@ for (const arm of ARMS) {
   console.error(`${arm.name}: planted ${r.planted.get("all")} real ${r.real.get("all")} (median ${med(r.ms).toFixed(0)}ms/query)`)
 }
 
-function med(xs: number[]) { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0 }
+function med(xs: number[]) {
+  const s = [...xs].sort((a, b) => a - b)
+  return s.length > 0 ? s[Math.floor(s.length / 2)] : 0
+}
 const lines: string[] = []
 lines.push(`# Recall retrieval: rankers compared (${split}${PARAPHRASE ? ", paraphrased questions" : ""})`, "")
-lines.push(`Same corpus (6-line windows + agent narrative), same rendering (top ${RETRIEVAL_TOP}, salient excerpt, default budgets), same exact-match hit. Rerankers re-order the base ranker's top ${RETRIEVAL_CANDIDATES}. ${asks.filter((a) => a.planted).length} planted questions, ${asks.filter((a) => !a.planted).length} real.`, "")
+lines.push(
+  `Same corpus (6-line windows + agent narrative), same rendering (top ${RETRIEVAL_TOP}, salient excerpt, default budgets), same exact-match hit. Rerankers re-order the base ranker's top ${RETRIEVAL_CANDIDATES}. ${asks.filter((a) => a.planted).length} planted questions, ${asks.filter((a) => !a.planted).length} real.`,
+  "",
+)
 lines.push("## Hit rate inside the injected context", "")
 lines.push(`| arm | planted ${PLANTED_KEYS.join(" | ")} | real ${REAL_KEYS.join(" | ")} |`, `|${"---|".repeat(PLANTED_KEYS.length + REAL_KEYS.length + 1)}`)
 for (const [name, r] of Object.entries(results)) lines.push(`| ${name} | ${PLANTED_KEYS.map((k) => r.planted.get(k)).join(" | ")} | ${REAL_KEYS.map((k) => r.real.get(k)).join(" | ")} |`)
 lines.push("", "## Ranking quality and cost", "")
-lines.push(`| arm | answer within top ${RETRIEVAL_TOP} (planted / real) | within top ${RETRIEVAL_CANDIDATES} (planted / real) | ms per query (median / p95) | injected chars (median) | index ms per 1k chunks | model calls | input tokens |`, "|---|---|---|---|---|---|---|---|")
+lines.push(
+  `| arm | answer within top ${RETRIEVAL_TOP} (planted / real) | within top ${RETRIEVAL_CANDIDATES} (planted / real) | ms per query (median / p95) | injected chars (median) | index ms per 1k chunks | model calls | input tokens |`,
+  "|---|---|---|---|---|---|---|---|",
+)
 for (const [name, r] of Object.entries(results)) {
   const sorted = [...r.ms].sort((a, b) => a - b)
   const key = name.replace(/^(dense|hybrid):/, "")
   const idx = indexMs.has(key) ? Math.round((indexMs.get(key)! / Math.max(1, indexed.get(key)!)) * 1000) : "–"
-  const model = name.includes("sonnet") ? "claude-sonnet-5-5" : name.includes("haiku rewrite") ? "rewrite:claude-haiku-4-5-20251001" : name.includes("haiku") ? "claude-haiku-4-5-20251001" : name.startsWith("ollama:") ? `ollama_${name.slice(7).replace(" rerank", "")}` : name.match(/^(jev-[\w.-]+)/)?.[1] ?? ""
+  const model = name.includes("sonnet")
+    ? "claude-sonnet-5-5"
+    : name.includes("haiku rewrite")
+      ? "rewrite:claude-haiku-4-5-20251001"
+      : name.includes("haiku")
+        ? "claude-haiku-4-5-20251001"
+        : name.startsWith("ollama:")
+          ? `ollama_${name.slice(7).replace(" rerank", "")}`
+          : (name.match(/^(jev-[\w.-]+)/)?.[1] ?? "")
   const jv = jevStats.get(model)
-  lines.push(`| ${name} | ${r.cand12.get("planted")} / ${r.cand12.get("real")} | ${r.cand30.get("planted")} / ${r.cand30.get("real")} | ${med(r.ms).toFixed(0)} / ${(sorted[Math.floor(sorted.length * 0.95)] ?? 0).toFixed(0)} | ${med(r.chars)} | ${idx} | ${model ? (jv ? jv.calls : llmCalls.get(model) ?? 0) : "–"} | ${model ? (jv ? jv.tokens : llmTokens.get(model.replace(/^rewrite:/, "")) ?? "–") : "–"} |`)
+  lines.push(
+    `| ${name} | ${r.cand12.get("planted")} / ${r.cand12.get("real")} | ${r.cand30.get("planted")} / ${r.cand30.get("real")} | ${med(r.ms).toFixed(0)} / ${(sorted[Math.floor(sorted.length * 0.95)] ?? 0).toFixed(0)} | ${med(r.chars)} | ${idx} | ${model ? (jv ? jv.calls : (llmCalls.get(model) ?? 0)) : "–"} | ${model ? (jv ? jv.tokens : (llmTokens.get(model.replace(/^rewrite:/, "")) ?? "–")) : "–"} |`,
+  )
 }
 mkdirSync(COMPONENTS, { recursive: true })
-const out = path.join(COMPONENTS, `retrieval.${split}${PARAPHRASE ? ".paraphrase" : ""}${RETRIEVAL_ARM_FILTER.length ? `.${RETRIEVAL_ARM_FILTER.join("+").replace(/[^\w+-]/g, "_")}` : ""}.md`)
-writeFileSync(out, lines.join("\n") + "\n")
+const out = path.join(COMPONENTS, `retrieval.${split}${PARAPHRASE ? ".paraphrase" : ""}${RETRIEVAL_ARM_FILTER.length > 0 ? `.${RETRIEVAL_ARM_FILTER.join("+").replace(/[^\w+-]/g, "_")}` : ""}.md`)
+writeFileSync(out, `${lines.join("\n")}\n`)
 console.log(lines.join("\n"))
 console.log(`\nwritten ${out}`)

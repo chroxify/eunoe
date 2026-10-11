@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
-import { REREADABLE_TOOLS } from "../../src/context/constants"
 import { describeToolCall, resultText } from "../../src/context/content"
-import { toolPairs, turnEvidence } from "../../src/context/evidence"
+import { REREADABLE_TOOLS } from "../../src/context/fold/constants"
+import { toolPairs, turnEvidence } from "../../src/context/fold/evidence"
 import type { Message } from "../../src/context/types"
-import { Tally, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
 import { API_KEY_FILE, COMPONENTS, TOOL_FACTS } from "../lib/constants"
+import { keyTokens, mentions, plantedSessions, realPoints, Tally } from "../lib/data"
 import { blocks, evidencePicks, evidenceQuestions, jev, jevStats, lineId } from "../lib/jev"
 import { EVIDENCE_ARM_FILTER, EVIDENCE_TYPE_KEYS, HAIKU, LINES_PER_CALL, MAX_LINES, NOTES_PROMPT, PICK_PROMPT } from "./constants"
 
@@ -17,20 +17,25 @@ const calls = new Map<string, number>()
 const tokens = new Map<string, number>()
 const latency = new Map<string, number[]>()
 
-interface Eligible { head: string; lines: string[] }
+interface Eligible {
+  head: string
+  lines: string[]
+}
 function eligible(turn: Message[]): Eligible[] {
-  return toolPairs(turn).filter(({ call }) => !REREADABLE_TOOLS.has(call.name)).map(({ call, result }) => ({ head: `${describeToolCall(call)}${result.is_error ? " (failed)" : ""}`, lines: resultText(result).split("\n") }))
+  return toolPairs(turn)
+    .filter(({ call }) => !REREADABLE_TOOLS.has(call.name))
+    .map(({ call, result }) => ({ head: `${describeToolCall(call)}${result.is_error ? " (failed)" : ""}`, lines: resultText(result).split("\n") }))
 }
 
-function shown(lines: string[]): Array<[number, string]> {
-  if (lines.length <= MAX_LINES) return lines.map((l, i) => [i, l])
+function shown(list: string[]): Array<[number, string]> {
+  if (list.length <= MAX_LINES) return list.map((text, i) => [i, text])
   const half = Math.floor(MAX_LINES / 2)
-  return [...lines.slice(0, half).map((l, i) => [i, l] as [number, string]), ...lines.slice(-half).map((l, i) => [lines.length - half + i, l] as [number, string])]
+  return [...list.slice(0, half).map((l, i) => [i, l] as [number, string]), ...list.slice(-half).map((l, i) => [list.length - half + i, l] as [number, string])]
 }
 
 function render(entries: Array<{ head: string; lines: string[] }>): string {
   const body = entries.filter((e) => e.lines.length).map((e) => `- ${e.head}:\n${e.lines.map((l) => `    ${l.slice(0, 220)}`).join("\n")}`)
-  return body.length ? `<tool-evidence>\nKey lines of command output from this turn, kept verbatim (the full output is in the transcript):\n${body.join("\n")}\n</tool-evidence>` : ""
+  return body.length > 0 ? `<tool-evidence>\nKey lines of command output from this turn, kept verbatim (the full output is in the transcript):\n${body.join("\n")}\n</tool-evidence>` : ""
 }
 
 async function anthropic(model: string, prompt: string, maxTokens: number): Promise<string> {
@@ -60,7 +65,14 @@ async function ollama(model: string, prompt: string, maxTokens: number): Promise
 }
 
 function listing(items: Eligible[]): string {
-  return items.map((item, n) => `### command ${n}: ${item.head}\n${shown(item.lines).map(([i, l]) => `${i}: ${l.slice(0, 220)}`).join("\n")}`).join("\n\n")
+  return items
+    .map(
+      (item, n) =>
+        `### command ${n}: ${item.head}\n${shown(item.lines)
+          .map(([i, l]) => `${i}: ${l.slice(0, 220)}`)
+          .join("\n")}`,
+    )
+    .join("\n\n")
 }
 
 type Picker = (turn: Message[], key: string) => Promise<string>
@@ -69,7 +81,11 @@ type Picks = (items: Eligible[]) => Promise<Record<string, number[]>>
 function promptPicks(call: (prompt: string, maxTokens: number) => Promise<string>): Picks {
   return async (items) => {
     const text = await call(PICK_PROMPT(listing(items)), 400)
-    try { return JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}") } catch { return {} }
+    try {
+      return JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? "{}")
+    } catch {
+      return {}
+    }
   }
 }
 
@@ -91,7 +107,7 @@ function jevPicks(model: string): Picks {
 function modelPicker(label: string, pick: Picks, union: boolean): Picker {
   return async (turn, key) => {
     const items = eligible(turn)
-    if (!items.length) return ""
+    if (items.length === 0) return ""
     caches[label] ??= existsSync(cacheFile(label)) ? JSON.parse(readFileSync(cacheFile(label), "utf8")) : {}
     let picks = caches[label][key] as Record<string, number[]> | undefined
     if (!picks) {
@@ -99,19 +115,37 @@ function modelPicker(label: string, pick: Picks, union: boolean): Picker {
       caches[label][key] = picks
       writeFileSync(cacheFile(label), JSON.stringify(caches[label]))
     }
-    const current = union ? new Set((turnEvidence(turn) ?? "").split("\n").map((l) => l.trim()).filter((l) => l.length >= 4)) : new Set<string>()
-    return render(items.map((item, n) => {
-      const chosen = new Set((picks![String(n)] ?? []).filter((i) => Number.isInteger(i) && i >= 0 && i < item.lines.length).slice(0, LINES_PER_CALL))
-      if (union) item.lines.forEach((l, i) => { if (current.has(l.trim())) chosen.add(i) })
-      return { head: item.head, lines: [...chosen].sort((a, b) => a - b).map((i) => item.lines[i].trim()).filter((l) => l.length >= 4) }
-    }))
+    const current = union
+      ? new Set(
+          (turnEvidence(turn) ?? "")
+            .split("\n")
+            .map((l) => l.trim())
+            .filter((l) => l.length >= 4),
+        )
+      : new Set<string>()
+    return render(
+      items.map((item, n) => {
+        const chosen = new Set((picks![String(n)] ?? []).filter((i) => Number.isInteger(i) && i >= 0 && i < item.lines.length).slice(0, LINES_PER_CALL))
+        if (union)
+          item.lines.forEach((l, i) => {
+            if (current.has(l.trim())) chosen.add(i)
+          })
+        return {
+          head: item.head,
+          lines: [...chosen]
+            .sort((a, b) => a - b)
+            .map((i) => item.lines[i].trim())
+            .filter((l) => l.length >= 4),
+        }
+      }),
+    )
   }
 }
 
 function notesWriter(label: string, call: (prompt: string, maxTokens: number) => Promise<string>): Picker {
   return async (turn, key) => {
     const items = eligible(turn)
-    if (!items.length) return ""
+    if (items.length === 0) return ""
     caches[label] ??= existsSync(cacheFile(label)) ? JSON.parse(readFileSync(cacheFile(label), "utf8")) : {}
     let notes = caches[label][key] as string | undefined
     if (notes === undefined) {
@@ -125,15 +159,59 @@ function notesWriter(label: string, call: (prompt: string, maxTokens: number) =>
 
 const ARMS: Record<string, Picker> = {
   patterns: async (turn) => turnEvidence(turn) ?? "",
-  "haiku picks": modelPicker(`${HAIKU}.pick`, promptPicks((p, m) => anthropic(HAIKU, p, m)), false),
-  "patterns ∪ haiku picks": modelPicker(`${HAIKU}.pick`, promptPicks((p, m) => anthropic(HAIKU, p, m)), true),
+  "haiku picks": modelPicker(
+    `${HAIKU}.pick`,
+    promptPicks((p, m) => anthropic(HAIKU, p, m)),
+    false,
+  ),
+  "patterns ∪ haiku picks": modelPicker(
+    `${HAIKU}.pick`,
+    promptPicks((p, m) => anthropic(HAIKU, p, m)),
+    true,
+  ),
   "haiku notes": notesWriter(`${HAIKU}.notes`, (p, m) => anthropic(HAIKU, p, m)),
-  ...Object.fromEntries((process.env.OLLAMA_MODELS ?? "").split(",").filter(Boolean).flatMap((m) => [[`ollama:${m} picks`, modelPicker(`ollama_${m}.pick`, promptPicks((p, mx) => ollama(m, p, mx)), false)], [`patterns ∪ ollama:${m} picks`, modelPicker(`ollama_${m}.pick`, promptPicks((p, mx) => ollama(m, p, mx)), true)]])),
-  ...Object.fromEntries((process.env.JEV_MODELS ?? "jev-latest").split(",").filter(Boolean).flatMap((m) => [[`${m} picks`, modelPicker(`${m}.pick`, jevPicks(m), false)], [`patterns ∪ ${m} picks`, modelPicker(`${m}.pick`, jevPicks(m), true)]])),
+  ...Object.fromEntries(
+    (process.env.OLLAMA_MODELS ?? "")
+      .split(",")
+      .filter(Boolean)
+      .flatMap((m) => [
+        [
+          `ollama:${m} picks`,
+          modelPicker(
+            `ollama_${m}.pick`,
+            promptPicks((p, mx) => ollama(m, p, mx)),
+            false,
+          ),
+        ],
+        [
+          `patterns ∪ ollama:${m} picks`,
+          modelPicker(
+            `ollama_${m}.pick`,
+            promptPicks((p, mx) => ollama(m, p, mx)),
+            true,
+          ),
+        ],
+      ]),
+  ),
+  ...Object.fromEntries(
+    (process.env.JEV_MODELS ?? "jev-latest")
+      .split(",")
+      .filter(Boolean)
+      .flatMap((m) => [
+        [`${m} picks`, modelPicker(`${m}.pick`, jevPicks(m), false)],
+        [`patterns ∪ ${m} picks`, modelPicker(`${m}.pick`, jevPicks(m), true)],
+      ]),
+  ),
 }
-const names = Object.keys(ARMS).filter((n) => !EVIDENCE_ARM_FILTER.length || EVIDENCE_ARM_FILTER.some((f) => n.includes(f)))
+const names = Object.keys(ARMS).filter((n) => EVIDENCE_ARM_FILTER.length === 0 || EVIDENCE_ARM_FILTER.some((f) => n.includes(f)))
 
-interface Case { turns: Message[][]; keys: string[]; hit: (text: string) => boolean; label: string; planted: boolean }
+interface Case {
+  turns: Message[][]
+  keys: string[]
+  hit: (text: string) => boolean
+  label: string
+  planted: boolean
+}
 const cases: Case[] = []
 const turnKey = (turn: Message[]) => createHash("sha1").update(JSON.stringify(turn)).digest("hex").slice(0, 16)
 for (const session of plantedSessions(split === "all" ? undefined : split)) {
@@ -153,7 +231,7 @@ for (const point of realPoints()) {
     const tk = keyTokens(q.answer)
     const centre = point.turns.length - q.turnsAgo
     const near = point.turns.slice(Math.max(0, centre - 1), centre + 2).filter((t) => eligible(t).some((e) => mentions(e.lines.join("\n"), tk)))
-    if (!near.length) continue
+    if (near.length === 0) continue
     cases.push({ turns: near, keys: near.map(turnKey), hit: (t) => mentions(t, tk), label: q.type, planted: false })
   }
 }
@@ -171,7 +249,12 @@ for (const name of names) {
     for (let i = 0; i < c.turns.length; i += 1) {
       const id = `${name}:${c.keys[i]}`
       if (!evidenceOf.has(id)) {
-        try { evidenceOf.set(id, await ARMS[name](c.turns[i], c.keys[i])) } catch (e) { console.error(`${name}: ${String(e).slice(0, 200)}`); evidenceOf.set(id, "") }
+        try {
+          evidenceOf.set(id, await ARMS[name](c.turns[i], c.keys[i]))
+        } catch (e) {
+          console.error(`${name}: ${String(e).slice(0, 200)}`)
+          evidenceOf.set(id, "")
+        }
         sizes.get(name)!.push(evidenceOf.get(id)!.length)
       }
       texts.push(evidenceOf.get(id)!)
@@ -186,11 +269,20 @@ for (const name of names) {
   console.error(`${name}: planted ${planted.get(name)!.get("all")} real ${real.get(name)!.get("all")}`)
 }
 
-const med = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length / 2)] : 0 }
-const p95 = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.floor(s.length * 0.95)] : 0 }
+const med = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b)
+  return s.length > 0 ? s[Math.floor(s.length / 2)] : 0
+}
+const p95 = (xs: number[]) => {
+  const s = [...xs].sort((a, b) => a - b)
+  return s.length > 0 ? s[Math.floor(s.length * 0.95)] : 0
+}
 const lines: string[] = []
 lines.push(`# Evidence: model line pickers vs patterns (${split})`, "")
-lines.push(`Evaluated on the turns that hold a planted value (${cases.filter((c) => c.planted).length} plants) and the source turns of real tool-output questions (${cases.filter((c) => !c.planted).length} questions), ${uniqueTurns} distinct turns. Hit = the value survives in the turn's <tool-evidence>. Model pickers see each eligible command's output numbered by line (first and last ${MAX_LINES / 2} lines when longer) and return line numbers; "notes" writes free text instead. ∪ = model picks plus the pattern scorer's top 4 per command.`, "")
+lines.push(
+  `Evaluated on the turns that hold a planted value (${cases.filter((c) => c.planted).length} plants) and the source turns of real tool-output questions (${cases.filter((c) => !c.planted).length} questions), ${uniqueTurns} distinct turns. Hit = the value survives in the turn's <tool-evidence>. Model pickers see each eligible command's output numbered by line (first and last ${MAX_LINES / 2} lines when longer) and return line numbers; "notes" writes free text instead. ∪ = model picks plus the pattern scorer's top 4 per command.`,
+  "",
+)
 lines.push("## Coverage", "")
 lines.push(`| arm | planted ${EVIDENCE_TYPE_KEYS.join(" | ")} | real tool_evidence | real recent | real all |`, `|${"---|".repeat(EVIDENCE_TYPE_KEYS.length + 4)}`)
 for (const name of names) lines.push(`| ${name} | ${EVIDENCE_TYPE_KEYS.map((k) => planted.get(name)!.get(k)).join(" | ")} | ${real.get(name)!.get("tool_evidence")} | ${real.get(name)!.get("recent")} | ${real.get(name)!.get("all")} |`)
@@ -198,13 +290,15 @@ lines.push("", "## Cost", "")
 lines.push("| arm | chars per folded turn (mean / p95) | model calls | input tokens | ms per turn (median / p95) |", "|---|---|---|---|---|")
 for (const name of names) {
   const s = sizes.get(name)!
-  const model = name.includes("haiku") ? HAIKU : name.includes("ollama:") ? name.match(/ollama:(\S+)/)![1] : name.match(/(jev-[\w.-]+)/)?.[1] ?? ""
+  const model = name.includes("haiku") ? HAIKU : name.includes("ollama:") ? name.match(/ollama:(\S+)/)![1] : (name.match(/(jev-[\w.-]+)/)?.[1] ?? "")
   const jv = jevStats.get(model)
-  const ms = jv ? jv.ms : latency.get(model) ?? []
-  lines.push(`| ${name} | ${Math.round(s.reduce((a, b) => a + b, 0) / Math.max(1, s.length))} / ${p95(s)} | ${model ? (jv ? jv.calls : calls.get(model) ?? 0) : "–"} | ${model ? (jv ? jv.tokens : tokens.get(model) ?? 0) : "–"} | ${model && ms.length ? `${med(ms).toFixed(0)} / ${p95(ms).toFixed(0)}` : "–"} |`)
+  const ms = jv ? jv.ms : (latency.get(model) ?? [])
+  lines.push(
+    `| ${name} | ${Math.round(s.reduce((a, b) => a + b, 0) / Math.max(1, s.length))} / ${p95(s)} | ${model ? (jv ? jv.calls : (calls.get(model) ?? 0)) : "–"} | ${model ? (jv ? jv.tokens : (tokens.get(model) ?? 0)) : "–"} | ${model && ms.length > 0 ? `${med(ms).toFixed(0)} / ${p95(ms).toFixed(0)}` : "–"} |`,
+  )
 }
 mkdirSync(COMPONENTS, { recursive: true })
-const out = path.join(COMPONENTS, `evidence-model.${split}${EVIDENCE_ARM_FILTER.length ? `.${EVIDENCE_ARM_FILTER.join("+").replace(/[^\w+-]/g, "_")}` : ""}.md`)
-writeFileSync(out, lines.join("\n") + "\n")
+const out = path.join(COMPONENTS, `evidence-model.${split}${EVIDENCE_ARM_FILTER.length > 0 ? `.${EVIDENCE_ARM_FILTER.join("+").replace(/[^\w+-]/g, "_")}` : ""}.md`)
+writeFileSync(out, `${lines.join("\n")}\n`)
 console.log(lines.join("\n"))
 console.log(`\nwritten ${out}`)

@@ -5,7 +5,7 @@ import { ARMS as ALL_ARMS } from "../constants"
 import { claude, projectDir } from "../lib/claude"
 import { API_KEY, BASE_SETTINGS, CONFIG_DIR, NO_TOOLS, READ_ONLY } from "../lib/constants"
 import { extractJson } from "../lib/json"
-import { blocks, clean, findPoints, parse, realPrompt, sessionRoots, textOf, type Entry } from "../lib/points"
+import { blocks, clean, type Entry, findPoints, parse, realPrompt, sessionRoots, textOf } from "../lib/points"
 import { proxyRequests as requestsOf, startProxies as spawnProxies } from "../lib/proxy"
 import { ANSWER, ANSWER_MODEL, ARMS, GENERATOR, JUDGE, JUDGES, ORACLE, ORACLE_MODEL, OUT, PROXIES, REPLICATE, RESULTS, RUN_TAG, SEED, SUFFIX } from "./constants"
 
@@ -52,43 +52,57 @@ export function contextOf(entry: Entry) {
   return u ? (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) : 0
 }
 
+function globOrEmpty(pattern: string, cwd: string, onlyFiles = true): string[] {
+  try {
+    return Array.from(new Bun.Glob(pattern).scanSync({ cwd, onlyFiles }))
+  } catch {
+    return []
+  }
+}
+
+function syntheticCut(entries: Entry[]) {
+  let last = 0
+  let turns = 0
+  let cut = -1
+  let after = 0
+  for (let i = 0; i < entries.length; i += 1) {
+    const e = entries[i]
+    if (e.subtype === "compact_boundary") break
+    if (e.type === "assistant" && !e.isSidechain && contextOf(e)) last = contextOf(e)
+    if (!realPrompt(e)) continue
+    if (cut !== -1) after += 1
+    else {
+      turns += 1
+      if (turns > 20 && last >= 350_000) cut = i
+    }
+  }
+  return { last, turns, cut, after }
+}
+
+function syntheticPoint(dir: string, name: string, exclude: Set<string>): BenchPoint | null {
+  const sessionId = name.slice(0, -6)
+  if (exclude.has(sessionId)) return null
+  const file = path.join(dir, name)
+  if (Bun.file(file).size < 2_000_000) return null
+  const lines = readFileSync(file, "utf8").split("\n").filter(Boolean)
+  const entries = parse(lines)
+  const cwd = entries.find((e) => typeof e.cwd === "string")?.cwd
+  if (!cwd || !existsSync(cwd)) return null
+  const { last, turns, cut, after } = syntheticCut(entries)
+  if (cut === -1 || after < 2) return null
+  let next = cut + 1
+  while (next < entries.length && !realPrompt(entries[next])) next += 1
+  return { kind: "synthetic", sessionId, cwd, lines, cutLine: next, tokensAtCut: last, turnsBefore: turns }
+}
+
 function syntheticPoints(exclude: Set<string>): BenchPoint[] {
   const out: BenchPoint[] = []
   for (const root of sessionRoots()) {
-    let projects: string[]
-    try { projects = Array.from(new Bun.Glob("*").scanSync({ cwd: root, onlyFiles: false })) } catch { continue }
-    for (const project of projects) {
+    for (const project of globOrEmpty("*", root, false)) {
       const dir = path.join(root, project)
-      let names: string[]
-      try { names = Array.from(new Bun.Glob("*.jsonl").scanSync({ cwd: dir })) } catch { continue }
-      for (const name of names) {
-        const sessionId = name.slice(0, -6)
-        if (exclude.has(sessionId)) continue
-        const file = path.join(dir, name)
-        const stat = Bun.file(file).size
-        if (stat < 2_000_000) continue
-        const lines = readFileSync(file, "utf8").split("\n").filter(Boolean)
-        const entries = parse(lines)
-        const cwd = entries.find((e) => typeof e.cwd === "string")?.cwd
-        if (!cwd || !existsSync(cwd)) continue
-        let last = 0
-        let turns = 0
-        let cut = -1
-        let after = 0
-        for (let i = 0; i < entries.length; i += 1) {
-          const e = entries[i]
-          if (e.subtype === "compact_boundary") break
-          if (e.type === "assistant" && !e.isSidechain && contextOf(e)) last = contextOf(e)
-          if (!realPrompt(e)) continue
-          if (cut === -1) {
-            turns += 1
-            if (turns > 20 && last >= 350_000) cut = i
-          } else after += 1
-        }
-        if (cut === -1 || after < 2) continue
-        let next = cut + 1
-        while (next < entries.length && !realPrompt(entries[next])) next += 1
-        out.push({ kind: "synthetic", sessionId, cwd, lines, cutLine: next, tokensAtCut: last, turnsBefore: turns })
+      for (const name of globOrEmpty("*.jsonl", dir)) {
+        const point = syntheticPoint(dir, name, exclude)
+        if (point) out.push(point)
       }
     }
   }
@@ -116,8 +130,13 @@ export function choosePoints(): BenchPoint[] {
     if (!fresh({ ...p, cutLine: p.boundaryIndex }) || p.turnsBefore < 20 || !take(p.cwd, 3)) continue
     const meta = p.entries[p.boundaryIndex].compactMetadata
     real.push({
-      kind: "real", sessionId: p.sessionId, cwd: p.cwd, lines: p.lines, cutLine: p.boundaryIndex,
-      tokensAtCut: p.preTokens, turnsBefore: p.turnsBefore,
+      kind: "real",
+      sessionId: p.sessionId,
+      cwd: p.cwd,
+      lines: p.lines,
+      cutLine: p.boundaryIndex,
+      tokensAtCut: p.preTokens,
+      turnsBefore: p.turnsBefore,
       native: { durationMs: meta?.durationMs ?? 0, preTokens: meta?.preTokens ?? 0, postTokens: meta?.postTokens },
     })
   }
@@ -127,55 +146,76 @@ export function choosePoints(): BenchPoint[] {
   return [...real.slice(0, TOTAL - syntheticTaken.length), ...syntheticTaken].slice(0, TOTAL)
 }
 
+function assistantLines(entry: Entry): string[] {
+  const out: string[] = []
+  for (const b of blocks(entry.message)) {
+    if (b.type === "text" && String(b.text).trim()) out.push(`AGENT: ${String(b.text).slice(0, 2000)}`)
+    if (b.type !== "tool_use") continue
+    const i = b.input ?? {}
+    out.push(
+      `TOOL CALL ${b.name}: ${String(i.command ?? i.file_path ?? i.pattern ?? i.url ?? JSON.stringify(i))
+        .replace(/\s+/g, " ")
+        .slice(0, 400)}`,
+    )
+  }
+  return out
+}
+
+function toolOutputLines(entry: Entry): string[] {
+  const out: string[] = []
+  for (const b of blocks(entry.message)) {
+    if (b.type !== "tool_result") continue
+    const c = typeof b.content === "string" ? b.content : (b.content ?? []).map((x: any) => x.text ?? "").join("\n")
+    if (c.trim()) out.push(`TOOL OUTPUT: ${c.replace(/\s+/g, " ").slice(0, 1500)}`)
+  }
+  return out
+}
+
 export function sourceMaterial(point: BenchPoint): string {
   const entries = parse(point.lines.slice(0, point.cutLine))
   const out: string[] = []
   let turn = 0
-  let ago = 0
   const turnsTotal = entries.filter(realPrompt).length
   for (const entry of entries) {
     if (entry.isSidechain) continue
     if (realPrompt(entry)) {
       turn += 1
-      ago = turnsTotal - turn
+      const ago = turnsTotal - turn
       out.push(`\n### Turn ${turn} (${ago === 0 ? "IN PROGRESS when the context filled" : `${ago} before the cut`})\nUSER: ${clean(textOf(entry)).slice(0, 2500)}`)
       continue
     }
     if (!turn) continue
-    if (entry.type === "assistant") {
-      for (const b of blocks(entry.message)) {
-        if (b.type === "text" && String(b.text).trim()) out.push(`AGENT: ${String(b.text).slice(0, 2000)}`)
-        if (b.type === "tool_use") {
-          const i = b.input ?? {}
-          out.push(`TOOL CALL ${b.name}: ${String(i.command ?? i.file_path ?? i.pattern ?? i.url ?? JSON.stringify(i)).replace(/\s+/g, " ").slice(0, 400)}`)
-        }
-      }
-    }
-    if (entry.type === "user") {
-      for (const b of blocks(entry.message)) {
-        if (b.type !== "tool_result") continue
-        const c = typeof b.content === "string" ? b.content : (b.content ?? []).map((x: any) => x.text ?? "").join("\n")
-        if (c.trim()) out.push(`TOOL OUTPUT: ${c.replace(/\s+/g, " ").slice(0, 1500)}`)
-      }
-    }
+    if (entry.type === "assistant") out.push(...assistantLines(entry))
+    if (entry.type === "user") out.push(...toolOutputLines(entry))
   }
-  const after = parse(point.lines.slice(point.cutLine)).filter(realPrompt).slice(0, 2).map((e) => clean(textOf(e)).slice(0, 1200))
+  const after = parse(point.lines.slice(point.cutLine))
+    .filter(realPrompt)
+    .slice(0, 2)
+    .map((e) => clean(textOf(e)).slice(0, 1200))
   let text = out.join("\n")
-  if (text.length > 420_000) text = "[earliest turns truncated]\n" + text.slice(-420_000)
+  if (text.length > 420_000) text = `[earliest turns truncated]\n${text.slice(-420_000)}`
   return `${text}\n\n=== WHAT THE USER ASKED NEXT, AFTER THE CUT (only for the continuation reference answers) ===\n${after.join("\n---\n")}`
 }
 
 export function writeCopy(point: BenchPoint, lines: string[], id: string, edit?: (e: Entry) => Entry) {
   const file = path.join(projectDir(point.cwd), `${id}.jsonl`)
   mkdirSync(path.dirname(file), { recursive: true })
-  writeFileSync(file, lines.map((line) => {
-    try {
-      let e = JSON.parse(line)
-      if (e.sessionId) e.sessionId = id
-      if (edit) e = edit(e)
-      return JSON.stringify(e)
-    } catch { return null }
-  }).filter(Boolean).join("\n") + "\n")
+  writeFileSync(
+    file,
+    `${lines
+      .map((line) => {
+        try {
+          let e = JSON.parse(line)
+          if (e.sessionId) e.sessionId = id
+          if (edit) e = edit(e)
+          return JSON.stringify(e)
+        } catch {
+          return null
+        }
+      })
+      .filter(Boolean)
+      .join("\n")}\n`,
+  )
   return file
 }
 
@@ -224,12 +264,15 @@ function lookupHits(file: string, questions: any[]): number[] {
   if (!existsSync(file)) return []
   const entries = parse(readFileSync(file, "utf8").split("\n").filter(Boolean))
   const q = entries.findLastIndex((e) => e.type === "user" && textOf(e).includes("this is a memory check"))
-  const read = normalized(entries.slice(q + 1).filter((e) => e.type === "user")
-    .flatMap((e) => blocks(e.message).filter((b) => b.type === "tool_result"))
-    .map((b) => (typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? ""))).join("\n"))
-  return questions
-    .filter((x) => (x.type === "tool_evidence" || x.type === "recent") && normalized(String(x.answer)).length >= 3 && read.includes(normalized(String(x.answer))))
-    .map((x) => x.id)
+  const read = normalized(
+    entries
+      .slice(q + 1)
+      .filter((e) => e.type === "user")
+      .flatMap((e) => blocks(e.message).filter((b) => b.type === "tool_result"))
+      .map((b) => (typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "")))
+      .join("\n"),
+  )
+  return questions.filter((x) => (x.type === "tool_evidence" || x.type === "recent") && normalized(String(x.answer)).length >= 3 && read.includes(normalized(String(x.answer)))).map((x) => x.id)
 }
 
 export function skillsBeforeCut(point: BenchPoint): string[] {
@@ -255,13 +298,20 @@ async function preparePoint(point: BenchPoint, tag: string, log: (m: string) => 
   log(`questions (${point.turnsBefore} turns, ${Math.round(point.tokensAtCut / 1000)}k at cut)`)
   const gen = await claude(["--model", ANSWER_MODEL, ...NO_TOOLS], { cwd: OUT, stdin: GENERATOR + material })
   let questions: any[]
-  try { questions = extractJson(gen.result).questions } catch { log(`question generation failed: ${String(gen.result).slice(0, 160)}`); return null }
+  try {
+    questions = extractJson(gen.result).questions
+  } catch {
+    log(`question generation failed: ${String(gen.result).slice(0, 160)}`)
+    return null
+  }
 
   const vet = await claude(["--model", ORACLE_MODEL, ...NO_TOOLS], { cwd: OUT, stdin: ORACLE(questions, material) })
   const oracle: Record<string, { ok: boolean; why: string }> = {}
   try {
     for (const v of extractJson(vet.result).verdicts) oracle[String(v.id)] = { ok: v.verdict === "ok", why: v.why ?? "" }
-  } catch { log("oracle failed; keeping every question") }
+  } catch {
+    log("oracle failed; keeping every question")
+  }
   const kept = questions.filter((q) => oracle[String(q.id)]?.ok !== false)
   log(`questions: ${kept.length}/${questions.length} vetted`)
   const prepared = { questions, oracle, kept }
@@ -277,13 +327,16 @@ async function runPoint(point: BenchPoint, index: number) {
   const log = (m: string) => console.log(`[${tag} ${point.kind} ${path.basename(point.cwd)}] ${m}`)
   const pre = point.lines.slice(0, point.cutLine)
   const transcriptCopy = path.join(OUT, "transcripts", `${tag}.jsonl`)
-  writeFileSync(transcriptCopy, pre.join("\n") + "\n")
+  writeFileSync(transcriptCopy, `${pre.join("\n")}\n`)
   const created: string[] = []
 
   const prepared = await preparePoint(point, tag, log)
   if (!prepared) return null
   const { questions, oracle, kept } = prepared
-  if (kept.length < 4) { log("too few usable questions, skipping point"); return null }
+  if (kept.length < 4) {
+    log("too few usable questions, skipping point")
+    return null
+  }
   if (PHASE === "prepare") return null
 
   let nativeLines: string[]
@@ -295,67 +348,80 @@ async function runPoint(point: BenchPoint, index: number) {
   } else {
     log("native: running /compact")
     let file = ""
-    const out = await claude(() => {
-      if (file) rmSync(file, { force: true })
-      const id = crypto.randomUUID()
-      file = writeCopy(point, pre, id)
-      created.push(file)
-      return ["--resume", id, "--model", ANSWER_MODEL, "--settings", JSON.stringify(BASE_SETTINGS)]
-    }, { cwd: point.cwd, stdin: "/compact" })
+    const out = await claude(
+      () => {
+        if (file) rmSync(file, { force: true })
+        const id = crypto.randomUUID()
+        file = writeCopy(point, pre, id)
+        created.push(file)
+        return ["--resume", id, "--model", ANSWER_MODEL, "--settings", JSON.stringify(BASE_SETTINGS)]
+      },
+      { cwd: point.cwd, stdin: "/compact" },
+    )
     const after = readFileSync(file, "utf8").split("\n").filter(Boolean)
     const boundary = parse(after).find((e) => e.subtype === "compact_boundary")
-    if (!boundary) { log(`/compact produced no summary: ${String(out.result).slice(0, 160)}`); return null }
+    if (!boundary) {
+      log(`/compact produced no summary: ${String(out.result).slice(0, 160)}`)
+      return null
+    }
     native = { durationMs: boundary.compactMetadata?.durationMs ?? out.wallMs, preTokens: boundary.compactMetadata?.preTokens ?? 0, postTokens: boundary.compactMetadata?.postTokens }
     nativeLines = after
   }
-  writeFileSync(path.join(OUT, "transcripts", `${tag}${SUFFIX}.native.jsonl`), nativeLines.join("\n") + "\n")
+  writeFileSync(path.join(OUT, "transcripts", `${tag}${SUFFIX}.native.jsonl`), `${nativeLines.join("\n")}\n`)
   const nativeEdit = repointSummary(transcriptCopy)
 
   const arms = ARMS.filter((a) => a !== "full" || (point.kind === "synthetic" && point.tokensAtCut < 700_000))
   const answers: Record<string, any> = {}
   const canon = path.join(OUT, "canon", `${tag}.json`)
   const pinned = Boolean(RUN_TAG) && arms.some((a) => a !== "native" && a !== "native+guide")
-  await Promise.all(arms.map(async (arm) => {
-    const isNative = arm === "native" || arm === "native+guide"
-    const deadline = Date.now() + 30 * 60_000
-    if (pinned && isNative) while (!existsSync(canon) && Date.now() < deadline) await Bun.sleep(1_000)
-    const lines = isNative ? nativeLines : pre
-    const env = {
-      ANTHROPIC_BASE_URL: `http://127.0.0.1:${armSpec(arm).port}`,
-      ANTHROPIC_CUSTOM_HEADERS: [`x-eunoe-transcript: ${transcriptCopy}`, ...(pinned ? [`x-eunoe-canonical: ${canon}`] : [])].join("\n"),
-    }
-    let id = ""
-    let file = ""
-    const out = await claude(() => {
-      if (file) rmSync(file, { force: true })
-      id = crypto.randomUUID()
-      file = writeCopy(point, lines, id, isNative ? nativeEdit : shrinkUsage)
-      created.push(file)
-      return ["--resume", id, "--model", ANSWER_MODEL, "--permission-mode", "default", "--settings", JSON.stringify({ ...BASE_SETTINGS, autoCompactEnabled: false, env }), "--allowedTools", READ_ONLY]
-    }, { cwd: point.cwd, stdin: ANSWER(kept), env })
-    let parsed: any[] = []
-    try { parsed = extractJson(out.result).answers } catch {}
-    const requests = proxyRequests(arm, id)
-    answers[arm] = {
-      answers: parsed,
-      raw: String(out.result ?? "").slice(0, 3000),
-      error: parsed.length ? undefined : String(out.result ?? "").slice(0, 300),
-      wallMs: out.wallMs,
-      agentTurns: out.num_turns,
-      lookups: lookupsAfterQuestion(file, point.cwd),
-      foundByLookup: lookupHits(file, kept),
-      context: requests.find((r) => r.context)?.context ?? null,
-      keptTurns: requests.find((r) => r.keptTurns)?.keptTurns ?? null,
-      contextAtQuestion: requests.find((r) => r.input)?.input ?? null,
-      requests: requests.length,
-      tokensProcessed: requests.reduce((s, r) => s + (r.input ?? 0), 0),
-      cacheRead: requests.reduce((s, r) => s + (r.cacheRead ?? 0), 0),
-      cacheWrite: requests.reduce((s, r) => s + (r.cacheWrite ?? 0), 0),
-      outputTokens: out.usage?.output_tokens ?? null,
-      note: requests.find((r) => r.action)?.action ?? null,
-    }
-    log(`${arm}: ${parsed.length} answers, ${answers[arm].lookups.calls} lookups, ${Math.round(out.wallMs / 1000)}s, ctx ${Math.round((answers[arm].contextAtQuestion ?? 0) / 1000)}k`)
-  }))
+  await Promise.all(
+    arms.map(async (arm) => {
+      const isNative = arm === "native" || arm === "native+guide"
+      const deadline = Date.now() + 30 * 60_000
+      if (pinned && isNative) while (!existsSync(canon) && Date.now() < deadline) await Bun.sleep(1_000)
+      const lines = isNative ? nativeLines : pre
+      const env = {
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${armSpec(arm).port}`,
+        ANTHROPIC_CUSTOM_HEADERS: [`x-eunoe-transcript: ${transcriptCopy}`, ...(pinned ? [`x-eunoe-canonical: ${canon}`] : [])].join("\n"),
+      }
+      let id = ""
+      let file = ""
+      const out = await claude(
+        () => {
+          if (file) rmSync(file, { force: true })
+          id = crypto.randomUUID()
+          file = writeCopy(point, lines, id, isNative ? nativeEdit : shrinkUsage)
+          created.push(file)
+          return ["--resume", id, "--model", ANSWER_MODEL, "--permission-mode", "default", "--settings", JSON.stringify({ ...BASE_SETTINGS, autoCompactEnabled: false, env }), "--allowedTools", READ_ONLY]
+        },
+        { cwd: point.cwd, stdin: ANSWER(kept), env },
+      )
+      let parsed: any[] = []
+      try {
+        parsed = extractJson(out.result).answers
+      } catch {}
+      const requests = proxyRequests(arm, id)
+      answers[arm] = {
+        answers: parsed,
+        raw: String(out.result ?? "").slice(0, 3000),
+        error: parsed.length > 0 ? undefined : String(out.result ?? "").slice(0, 300),
+        wallMs: out.wallMs,
+        agentTurns: out.num_turns,
+        lookups: lookupsAfterQuestion(file, point.cwd),
+        foundByLookup: lookupHits(file, kept),
+        context: requests.find((r) => r.context)?.context ?? null,
+        keptTurns: requests.find((r) => r.keptTurns)?.keptTurns ?? null,
+        contextAtQuestion: requests.find((r) => r.input)?.input ?? null,
+        requests: requests.length,
+        tokensProcessed: requests.reduce((s, r) => s + (r.input ?? 0), 0),
+        cacheRead: requests.reduce((s, r) => s + (r.cacheRead ?? 0), 0),
+        cacheWrite: requests.reduce((s, r) => s + (r.cacheWrite ?? 0), 0),
+        outputTokens: out.usage?.output_tokens ?? null,
+        note: requests.find((r) => r.action)?.action ?? null,
+      }
+      log(`${arm}: ${parsed.length} answers, ${answers[arm].lookups.calls} lookups, ${Math.round(out.wallMs / 1000)}s, ctx ${Math.round((answers[arm].contextAtQuestion ?? 0) / 1000)}k`)
+    }),
+  )
   for (const f of created) rmSync(f, { force: true })
 
   const answered = arms.filter((a) => answers[a].answers.length)
@@ -363,20 +429,51 @@ async function runPoint(point: BenchPoint, index: number) {
   const labels = order.map((_, i) => String.fromCharCode(65 + i))
   const sets = Object.fromEntries(order.map((arm, i) => [labels[i], answers[arm].answers]))
   const grades: Record<string, Record<string, Array<{ score: number; label: string }>>> = {}
-  await Promise.all(JUDGES.map(async (model, j) => {
-    await Bun.sleep(j * 1200)
-    const out = await claude(["--model", model, ...NO_TOOLS], { cwd: OUT, stdin: JUDGE(kept, sets) })
-    try {
-      const raw = extractJson(out.result).grades
-      grades[model] = Object.fromEntries(order.map((arm, i) => [arm, kept.map((q) => {
-        const g = (raw[labels[i]] ?? []).find((x: any) => x.id === q.id) ?? {}
-        return { score: typeof g.score === "number" ? g.score : 0, label: String(g.label ?? "unknown") }
-      })]))
-    } catch { log(`judge ${model} failed`) }
-  }))
-  if (!Object.keys(grades).length) { log("no judge succeeded"); return null }
+  await Promise.all(
+    JUDGES.map(async (model, j) => {
+      await Bun.sleep(j * 1200)
+      const out = await claude(["--model", model, ...NO_TOOLS], { cwd: OUT, stdin: JUDGE(kept, sets) })
+      try {
+        const raw = extractJson(out.result).grades
+        grades[model] = Object.fromEntries(
+          order.map((arm, i) => [
+            arm,
+            kept.map((q) => {
+              const g = (raw[labels[i]] ?? []).find((x: any) => x.id === q.id) ?? {}
+              return { score: typeof g.score === "number" ? g.score : 0, label: String(g.label ?? "unknown") }
+            }),
+          ]),
+        )
+      } catch {
+        log(`judge ${model} failed`)
+      }
+    }),
+  )
+  if (Object.keys(grades).length === 0) {
+    log("no judge succeeded")
+    return null
+  }
 
-  const result = { tag, replicate: REPLICATE, kind: point.kind, cwd: point.cwd, session: point.sessionId, cutLine: point.cutLine, turnsBefore: point.turnsBefore, tokensAtCut: point.tokensAtCut, skillsBeforeCut: skillsBeforeCut(point), native, questions: kept, allQuestions: questions, oracle, labels: Object.fromEntries(order.map((arm, i) => [arm, labels[i]])), answers, grades, judges: JUDGES, answerModel: ANSWER_MODEL }
+  const result = {
+    tag,
+    replicate: REPLICATE,
+    kind: point.kind,
+    cwd: point.cwd,
+    session: point.sessionId,
+    cutLine: point.cutLine,
+    turnsBefore: point.turnsBefore,
+    tokensAtCut: point.tokensAtCut,
+    skillsBeforeCut: skillsBeforeCut(point),
+    native,
+    questions: kept,
+    allQuestions: questions,
+    oracle,
+    labels: Object.fromEntries(order.map((arm, i) => [arm, labels[i]])),
+    answers,
+    grades,
+    judges: JUDGES,
+    answerModel: ANSWER_MODEL,
+  }
   writeFileSync(resultFile, JSON.stringify(result, null, 2))
   const totals = order.map((a) => {
     const per = JUDGES.filter((m) => grades[m]?.[a]).map((m) => grades[m][a].reduce((s, g) => s + g.score, 0))
@@ -386,17 +483,27 @@ async function runPoint(point: BenchPoint, index: number) {
   return result
 }
 
-export const startProxies = () => spawnProxies(ALL_ARMS.filter((a) => ARMS.includes(a.name)), PROXIES, { window: 1_000_000 })
+export const startProxies = () =>
+  spawnProxies(
+    ALL_ARMS.filter((a) => ARMS.includes(a.name)),
+    PROXIES,
+    { window: 1_000_000 },
+  )
 
 if (import.meta.main) {
   const points = choosePoints()
-  console.log(`${PHASE}${REPLICATE > 1 ? ` (replicate ${REPLICATE})` : ""}: ${points.length} points (${points.filter((p) => p.kind === "real").length} real, ${points.filter((p) => p.kind === "synthetic").length} synthetic) · account ${path.basename(CONFIG_DIR)} · credits ${API_KEY ? "on standby" : "none"}`)
+  console.log(
+    `${PHASE}${REPLICATE > 1 ? ` (replicate ${REPLICATE})` : ""}: ${points.length} points (${points.filter((p) => p.kind === "real").length} real, ${points.filter((p) => p.kind === "synthetic").length} synthetic) · account ${path.basename(CONFIG_DIR)} · credits ${API_KEY ? "on standby" : "none"}`,
+  )
   const pointsFile = path.join(OUT, "points.json")
   const listed = points.map((p, i) => ({ tag: `p${String(i).padStart(2, "0")}`, kind: p.kind, cwd: p.cwd, session: p.sessionId, cutLine: p.cutLine, turns: p.turnsBefore, tokensAtCut: p.tokensAtCut }))
   if (existsSync(pointsFile)) {
     const fixed = JSON.parse(readFileSync(pointsFile, "utf8"))
     const mismatch = listed.findIndex((p, i) => !fixed[i] || fixed[i].session !== p.session || fixed[i].cutLine !== p.cutLine)
-    if (mismatch !== -1 && mismatch < fixed.length) { console.error(`points.json disagrees at ${listed[mismatch].tag}; delete it to re-select`); process.exit(1) }
+    if (mismatch !== -1 && mismatch < fixed.length) {
+      console.error(`points.json disagrees at ${listed[mismatch].tag}; delete it to re-select`)
+      process.exit(1)
+    }
   } else {
     writeFileSync(pointsFile, JSON.stringify(listed, null, 2))
   }
@@ -406,14 +513,16 @@ if (import.meta.main) {
   await Bun.sleep(1500)
   try {
     let next = 0
-    await Promise.all(Array.from({ length: PARALLEL }, async () => {
-      while (next < points.length) {
-        const i = next++
-        await runPoint(points[i], i).catch((e) => console.error(`[p${i}]`, e))
-      }
-    }))
+    await Promise.all(
+      Array.from({ length: PARALLEL }, async () => {
+        while (next < points.length) {
+          const i = next++
+          await runPoint(points[i], i).catch((e) => console.error(`[p${i}]`, e))
+        }
+      }),
+    )
   } finally {
-    proxies.forEach((p) => p.kill())
+    for (const p of proxies) p.kill()
   }
   console.log("done")
 }

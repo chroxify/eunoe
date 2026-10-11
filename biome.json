@@ -1,0 +1,124 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.9/schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": ["**", "!bench/out", "!bench/tools/models", "!assets", "!.claude", "!.kanna"]
+  },
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineEnding": "lf",
+    "lineWidth": 240
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "quoteProperties": "asNeeded",
+      "semicolons": "asNeeded",
+      "trailingCommas": "all",
+      "arrowParentheses": "always",
+      "bracketSpacing": true
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error",
+        "noUnusedFunctionParameters": "error",
+        "noUnusedPrivateClassMembers": "error",
+        "noPrivateImports": "error"
+      },
+      "suspicious": {
+        "noConsole": "error",
+        "noCommentText": "error",
+        "useAwait": "error",
+        "useErrorMessage": "error",
+        "noEvolvingTypes": "error",
+        "noShadow": "error"
+      },
+      "style": {
+        "noNonNullAssertion": "off",
+        "noUselessElse": "error",
+        "useCollapsedElseIf": "error",
+        "useSingleVarDeclarator": "error",
+        "useTemplate": "error",
+        "noYodaExpression": "error",
+        "useNodejsImportProtocol": "error",
+        "useAtIndex": "error",
+        "useExplicitLengthCheck": "error",
+        "useThrowOnlyError": "error",
+        "noParameterAssign": "error",
+        "useImportType": "error"
+      },
+      "complexity": {
+        "noForEach": "warn",
+        "noUselessTernary": "error",
+        "noStaticOnlyClass": "error",
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": {
+            "maxAllowedComplexity": 25
+          }
+        }
+      },
+      "performance": {
+        "noAccumulatingSpread": "error"
+      },
+      "nursery": {
+        "noFloatingPromises": "error",
+        "noMisusedPromises": "error",
+        "useExhaustiveSwitchCases": "error"
+      }
+    }
+  },
+  "plugins": ["./.biome/plugins/no-await-in-ternary.grit"],
+  "assist": {
+    "actions": {
+      "source": {
+        "organizeImports": "on"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["test/**", "**/*.test.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off",
+            "useAwait": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/cli/terminal/ui.ts", "bench/**", "scripts/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["bench/**", "src/context/types.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noExplicitAny": "off"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -4,11 +4,20 @@ import type { Message } from "../src/context/types"
 
 export const user = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] })
 export const system = (text: string): Message => ({ role: "system", content: text })
-export const reply = (text: string): Message => ({ role: "assistant", content: [{ type: "thinking", thinking: "…", signature: "s" }, { type: "text", text }] })
+export const reply = (text: string): Message => ({
+  role: "assistant",
+  content: [
+    { type: "thinking", thinking: "…", signature: "s" },
+    { type: "text", text },
+  ],
+})
 
 export const call = (id: string, input: Record<string, unknown> = { command: "ls" }): Message => ({
   role: "assistant",
-  content: [{ type: "text", text: `step ${id}` }, { type: "tool_use", id, name: "Bash", input }],
+  content: [
+    { type: "text", text: `step ${id}` },
+    { type: "tool_use", id, name: "Bash", input },
+  ],
 })
 
 export const result = (id: string, size = 20): Message => ({

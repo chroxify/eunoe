@@ -2,22 +2,21 @@ export type Mode = "off" | "compact" | "default"
 export type SearchMode = "jsonl" | "markdown" | "xml" | "qmd"
 export type Scope = "all" | "sessions"
 
-export interface RollingConfig {
+interface RollingConfig {
   keep: number
   budget: number
 }
 
-export interface RerankConfig {
+interface RerankConfig {
   model: string
   candidates?: number
   endpoint?: string
 }
 
-export interface EvalConfig {
+interface EvalConfig {
   recallOptions?: { maxChars?: number; maxCharsMulti?: number; perQuery?: number }
   strategy?: "tail" | "guide" | "trim"
   rolling?: RollingConfig
-  tailTurns?: number
   forceCut?: boolean
   trustHeaders?: boolean
   evidence?: boolean
@@ -30,6 +29,7 @@ export interface Tunables {
   keepTurns: number | "all"
   keep: number
   budget: number
+  turnCap: number | "off"
   search: SearchMode
   rerank: string
 }

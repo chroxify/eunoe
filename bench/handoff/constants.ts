@@ -36,7 +36,12 @@ export const PROXIES: ArmSpec[] = [
   { name: "hand-bare", proxy: "hand-bare", port: 8840, config: { ...BASE, rerank: "off", eval: { evidence: false, recall: false } } },
   { name: "hand-recall", proxy: "hand-recall", port: 8841, config: { ...BASE, rerank: "jev-preview", eval: { evidence: true, recall: true, rerank: { model: "jev-preview" } } } },
   { name: "hand-guide", proxy: "hand-guide", port: 8842, config: { ...BASE, rerank: "off", eval: { strategy: "guide", evidence: false, recall: false } } },
-  { name: "hand-recall-wide", proxy: "hand-recall-wide", port: 8843, config: { ...BASE, rerank: "jev-preview", eval: { evidence: true, recall: true, rerank: { model: "jev-preview" }, recallOptions: { maxChars: 30_000, maxCharsMulti: 90_000, perQuery: 6 } } } },
+  {
+    name: "hand-recall-wide",
+    proxy: "hand-recall-wide",
+    port: 8843,
+    config: { ...BASE, rerank: "jev-preview", eval: { evidence: true, recall: true, rerank: { model: "jev-preview" }, recallOptions: { maxChars: 30_000, maxCharsMulti: 90_000, perQuery: 6 } } },
+  },
 ]
 
 export const HANDOFF_ARMS: HandoffArm[] = [
@@ -81,13 +86,17 @@ export const SCENARIOS = ["bug", "continue", "rules"] as const
 export const BASELINE_ARMS = ["cold", "cold+hint", "folded", "folded+recall", "brief-opus+recall+", "auto"]
 export const REPORT_SCENARIOS = ["bug", "continue", "rules", "new"]
 
-export const RULES = (folded: string) => `Below is an earlier coding session between a developer and their agent, with tool output already reduced. Extract every standing instruction, rule, preference or constraint the developer gave that would still bind in a later session on this project: how to name things, what to use or avoid, who reviews, where to deploy, what never to touch, how replies should read. Quote each one in the developer's own words. When a rule was later revised, give only the current version and note what it replaced in parentheses.
+export const RULES = (
+  folded: string,
+) => `Below is an earlier coding session between a developer and their agent, with tool output already reduced. Extract every standing instruction, rule, preference or constraint the developer gave that would still bind in a later session on this project: how to name things, what to use or avoid, who reviews, where to deploy, what never to touch, how replies should read. Quote each one in the developer's own words. When a rule was later revised, give only the current version and note what it replaced in parentheses.
 
 Return only JSON: {"rules":["...", ...]}
 
 ${folded}`
 
-export const BRIEF = (folded: string) => `Below is an earlier coding session between a developer and their agent, with tool output already reduced. Write a handoff brief for a new agent that has to continue this work cold, days later. Cover, with headings: what was built and where it lives; rules and preferences the developer gave (current versions, in their words); decisions and the options rejected; exact values worth keeping (IDs, hashes, URLs, flags, prefixes, numbers, error codes, copied exactly); what was left open or promised. Be concrete and dense. Under 900 words.
+export const BRIEF = (
+  folded: string,
+) => `Below is an earlier coding session between a developer and their agent, with tool output already reduced. Write a handoff brief for a new agent that has to continue this work cold, days later. Cover, with headings: what was built and where it lives; rules and preferences the developer gave (current versions, in their words); decisions and the options rejected; exact values worth keeping (IDs, hashes, URLs, flags, prefixes, numbers, error codes, copied exactly); what was left open or promised. Be concrete and dense. Under 900 words.
 
 ${folded}`
 

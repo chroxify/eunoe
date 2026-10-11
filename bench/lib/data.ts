@@ -1,18 +1,47 @@
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import { splitTurns } from "../../src/context/fold/turns"
 import { terms } from "../../src/context/recall"
-import { splitTurns } from "../../src/context/turns"
 import type { Message } from "../../src/context/types"
 import { findSessionFile } from "../../src/transcript/locate"
 import { sessionMessages } from "../../src/transcript/messages"
 import { PLANTED_OUT, REAL_OUT } from "./constants"
 
-export interface Plant { turn: number; value: string }
-export interface Fact { id: string; type: string; answer: string; stale?: string; plants: Plant[]; question: string; ago: number }
-export interface PlantedSession { id: string; split: string; turns: Message[][]; messages: Message[]; facts: Fact[] }
-export interface RealQuestion { id: number; type: string; turnsAgo: number; question: string; answer: string }
-export interface RealPoint { tag: string; kind: string; turns: Message[][]; messages: Message[]; questions: RealQuestion[] }
+export interface Plant {
+  turn: number
+  value: string
+}
+export interface Fact {
+  id: string
+  type: string
+  answer: string
+  stale?: string
+  plants: Plant[]
+  question: string
+  ago: number
+}
+export interface PlantedSession {
+  id: string
+  split: string
+  turns: Message[][]
+  messages: Message[]
+  facts: Fact[]
+}
+export interface RealQuestion {
+  id: number
+  type: string
+  turnsAgo: number
+  question: string
+  answer: string
+}
+export interface RealPoint {
+  tag: string
+  kind: string
+  turns: Message[][]
+  messages: Message[]
+  questions: RealQuestion[]
+}
 
 export function plantedSessions(split?: string): PlantedSession[] {
   const dir = path.join(PLANTED_OUT, "sessions")
@@ -29,7 +58,9 @@ export function plantedSessions(split?: string): PlantedSession[] {
 function configDirs(): string[] {
   const swap = path.join(homedir(), ".claude-swap-backup", "sessions")
   let accounts: string[] = []
-  try { accounts = [...new Bun.Glob("*").scanSync({ cwd: swap, onlyFiles: false })].map((d) => path.join(swap, d)) } catch {}
+  try {
+    accounts = [...new Bun.Glob("*").scanSync({ cwd: swap, onlyFiles: false })].map((d) => path.join(swap, d))
+  } catch {}
   return [path.join(homedir(), ".claude"), ...accounts]
 }
 
@@ -44,7 +75,11 @@ export function realPoints(): RealPoint[] {
     for (const line of readFileSync(file, "utf8").split("\n").slice(0, point.cutLine)) {
       if (!line) continue
       let entry: any
-      try { entry = JSON.parse(line) } catch { continue }
+      try {
+        entry = JSON.parse(line)
+      } catch {
+        continue
+      }
       if (entry.isSidechain || entry.isCompactSummary || (entry.type !== "user" && entry.type !== "assistant") || !entry.message) continue
       messages.push({ role: entry.message.role, content: entry.message.content })
     }
@@ -56,7 +91,7 @@ export function realPoints(): RealPoint[] {
 export function keyTokens(answer: string): string[] {
   const all = [...new Set(terms(answer))]
   const strong = all.filter((t) => t.length >= 6 || /\d/.test(t))
-  return strong.length ? strong : all.filter((t) => t.length >= 4)
+  return strong.length > 0 ? strong : all.filter((t) => t.length >= 4)
 }
 
 export function mentions(text: string, tokens: string[]): boolean {

@@ -1,15 +1,18 @@
 import { mkdirSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { resultText } from "../../src/context/content"
-import { toolPairs, turnEvidence } from "../../src/context/evidence"
+import { REREADABLE_TOOLS } from "../../src/context/fold/constants"
+import { toolPairs, turnEvidence } from "../../src/context/fold/evidence"
 import type { Message } from "../../src/context/types"
-import { REREADABLE_TOOLS } from "../../src/context/constants"
-import { Tally, depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints } from "../lib/data"
 import { COMPONENTS, TOOL_FACTS } from "../lib/constants"
+import { depthBucket, keyTokens, mentions, pct, plantedSessions, realPoints, Tally } from "../lib/data"
 import { DEPTH_KEYS, EVIDENCE_TYPE_KEYS, EVIDENCE_VARIANTS } from "./constants"
 
 function outputOf(turn: Message[], allTools: boolean): string {
-  return toolPairs(turn).filter(({ call }) => allTools || !REREADABLE_TOOLS.has(call.name)).map(({ result }) => resultText(result)).join("\n")
+  return toolPairs(turn)
+    .filter(({ call }) => allTools || !REREADABLE_TOOLS.has(call.name))
+    .map(({ result }) => resultText(result))
+    .join("\n")
 }
 
 const split = process.argv[2]
@@ -64,7 +67,7 @@ for (const point of real) {
     const tokens = keyTokens(q.answer)
     const centre = point.turns.length - q.turnsAgo
     const near = point.turns.slice(Math.max(0, centre - 1), centre + 2)
-    if (!near.length || !near.some((t) => mentions(outputOf(t, true), tokens))) continue
+    if (near.length === 0 || !near.some((t) => mentions(outputOf(t, true), tokens))) continue
     realInOutput += 1
     for (const name of names) {
       const hit = near.some((t) => mentions(turnEvidence(t, EVIDENCE_VARIANTS[name]) ?? "", tokens))
@@ -88,7 +91,7 @@ lines.push("| variant | evidence chars / turn (mean) | p95 | share of eligible o
 for (const name of names) {
   const c = cost.get(name)!
   const sorted = [...c.sizes].sort((a, b) => a - b)
-  lines.push(`| ${name} | ${Math.round(c.evidence / Math.max(1, c.turns))} | ${sorted[Math.floor(sorted.length * 0.95)] ?? 0} | ${(100 * c.evidence / Math.max(1, c.output)).toFixed(1)}% |`)
+  lines.push(`| ${name} | ${Math.round(c.evidence / Math.max(1, c.turns))} | ${sorted[Math.floor(sorted.length * 0.95)] ?? 0} | ${((100 * c.evidence) / Math.max(1, c.output)).toFixed(1)}% |`)
 }
 lines.push("", `## Real sessions (tool_evidence + recent questions)`, "")
 lines.push(`Questions: ${realAsked}; answer tokens found in the source turn's output (±1 turn): ${realInOutput}. Hit = any answer token survives in evidence.`, "")
@@ -96,6 +99,6 @@ lines.push("| variant | tool_evidence | recent | all |", "|---|---|---|---|")
 for (const name of names) lines.push(`| ${name} | ${realTally.get(name)!.get("tool_evidence")} | ${realTally.get(name)!.get("recent")} | ${realTally.get(name)!.get("all")} |`)
 mkdirSync(COMPONENTS, { recursive: true })
 const out = path.join(COMPONENTS, `evidence${split ? `.${split}` : ""}.md`)
-writeFileSync(out, lines.join("\n") + "\n")
+writeFileSync(out, `${lines.join("\n")}\n`)
 console.log(lines.join("\n"))
 console.log(`\nwritten ${out}`)

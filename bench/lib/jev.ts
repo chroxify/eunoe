@@ -1,13 +1,26 @@
 import { readFileSync } from "node:fs"
 import { EVIDENCE_CATEGORIES, JEV_BLOCK, JEV_ENDPOINT, JEV_KEY_FILE, JEV_MAX_LINES } from "./constants"
 
-export interface JevStats { calls: number; tokens: number; ms: number[] }
+export interface JevStats {
+  calls: number
+  tokens: number
+  ms: number[]
+}
 export const jevStats = new Map<string, JevStats>()
 
-export interface JevNoul { type: "noul"; instructions: string }
-export interface JevChoice { type: "choice"; instructions: string; criteria: Record<string, string | null> }
+export interface JevNoul {
+  type: "noul"
+  instructions: string
+}
+export interface JevChoice {
+  type: "choice"
+  instructions: string
+  criteria: Record<string, string | null>
+}
 export type JevQuestion = JevNoul | JevChoice
-export interface JevAnswers { [key: string]: { type: "noul"; noul: number } | { type: "choice"; choice: string; confidence: number; probabilities: Record<string, number> } }
+export interface JevAnswers {
+  [key: string]: { type: "noul"; noul: number } | { type: "choice"; choice: string; confidence: number; probabilities: Record<string, number> }
+}
 
 export async function jev(model: string, state: string, questions: Record<string, JevQuestion>): Promise<JevAnswers> {
   const key = (process.env.TYPESAFE_API_KEY ?? readFileSync(JEV_KEY_FILE, "utf8")).trim()
@@ -35,7 +48,10 @@ export const lineId = (i: number) => `L${String(i).padStart(4, "0")}`
 export const lineIndex = (id: string) => Number(id.slice(1))
 
 export function blocks(lines: string[]): Array<Array<[number, string]>> {
-  const shown: Array<[number, string]> = lines.length <= JEV_MAX_LINES ? lines.map((l, i) => [i, l]) : [...lines.slice(0, JEV_MAX_LINES / 2).map((l, i) => [i, l] as [number, string]), ...lines.slice(-JEV_MAX_LINES / 2).map((l, i) => [lines.length - JEV_MAX_LINES / 2 + i, l] as [number, string])]
+  const shown: Array<[number, string]> =
+    lines.length <= JEV_MAX_LINES
+      ? lines.map((l, i) => [i, l])
+      : [...lines.slice(0, JEV_MAX_LINES / 2).map((l, i) => [i, l] as [number, string]), ...lines.slice(-JEV_MAX_LINES / 2).map((l, i) => [lines.length - JEV_MAX_LINES / 2 + i, l] as [number, string])]
   const kept = shown.filter(([, l]) => l.trim().length >= 2)
   const out: Array<Array<[number, string]>> = []
   for (let i = 0; i < kept.length; i += JEV_BLOCK) out.push(kept.slice(i, i + JEV_BLOCK))
@@ -57,9 +73,15 @@ export function evidencePicks(answers: JevAnswers, gate = 0.5, floor = 0.2, perC
   for (const [name] of EVIDENCE_CATEGORIES) {
     const has = answers[`${name}_has`]
     const line = answers[`${name}_line`]
-    if (!has || has.type !== "noul" || has.noul < gate || !line || line.type !== "choice") continue
-    const ranked = Object.entries(line.probabilities).filter(([, p]) => p >= floor).sort((a, b) => b[1] - a[1]).slice(0, perCategory)
+    if (has?.type !== "noul" || has.noul < gate || !line || line.type !== "choice") continue
+    const ranked = Object.entries(line.probabilities)
+      .filter(([, p]) => p >= floor)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, perCategory)
     for (const [id, p] of ranked) best.set(lineIndex(id), Math.max(best.get(lineIndex(id)) ?? 0, p))
   }
-  return [...best.entries()].sort((a, b) => b[1] - a[1]).slice(0, cap).map(([i]) => i)
+  return [...best.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, cap)
+    .map(([i]) => i)
 }

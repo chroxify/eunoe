@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
 import { blocks } from "../../src/context/content"
+import { isPrompt, splitTurns } from "../../src/context/fold/turns"
 import { rank, terms } from "../../src/context/recall"
-import { isPrompt, splitTurns } from "../../src/context/turns"
 import { sessionMessages } from "../../src/transcript/messages"
 import { claude } from "../lib/claude"
 import { NO_TOOLS } from "../lib/constants"
@@ -15,15 +15,38 @@ const MAX = Number(arg("max") ?? 40)
 const RANKERS = (arg("rankers") ?? "recency,bm25,jev,vote").split(",")
 mkdirSync(SELECT_REAL_OUT, { recursive: true })
 
-export interface Real { id: string; file: string; project: string; title: string; turns: number; outline: string; mtime: number }
+export interface Real {
+  id: string
+  file: string
+  project: string
+  title: string
+  turns: number
+  outline: string
+  mtime: number
+}
 
-const textOf = (m: any) => blocks(m).filter((b) => b.type === "text").map((b) => String(b.text ?? "")).join("\n").replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").trim()
+const textOf = (m: any) =>
+  blocks(m)
+    .filter((b) => b.type === "text")
+    .map((b) => String(b.text ?? ""))
+    .join("\n")
+    .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "")
+    .trim()
 
 function load(file: string, project: string): Real | null {
   let title = ""
-  for (const line of readFileSync(file, "utf8").split("\n")) if (line.includes('"aiTitle"')) { try { title = JSON.parse(line).aiTitle ?? "" } catch {} break }
+  for (const line of readFileSync(file, "utf8").split("\n"))
+    if (line.includes('"aiTitle"')) {
+      try {
+        title = JSON.parse(line).aiTitle ?? ""
+      } catch {}
+      break
+    }
   const { turns } = splitTurns(sessionMessages(file))
-  const prompts = turns.filter((t) => isPrompt(t[0])).map((t) => textOf(t[0])).filter(Boolean)
+  const prompts = turns
+    .filter((t) => isPrompt(t[0]))
+    .map((t) => textOf(t[0]))
+    .filter(Boolean)
   if (prompts.length < 15) return null
   return { id: path.basename(file, ".jsonl"), file, project, title: title || prompts[0].slice(0, 80), turns: prompts.length, outline: prompts.map((p, i) => `${i + 1}. ${p.slice(0, 240)}`).join("\n"), mtime: Bun.file(file).lastModified }
 }
@@ -60,11 +83,13 @@ async function resumePrompt(s: Real, scenario: string): Promise<string> {
 function bm25Pick(prompt: string, candidates: Real[]) {
   const chunks = candidates.map((s, i) => ({ turn: i, call: s.id, lines: [s.outline], terms: terms(s.outline) }))
   const ranked = rank(terms(prompt), chunks, 1)
-  return ranked.length ? candidates[ranked[0].index].id : candidates[0].id
+  return ranked.length > 0 ? candidates[ranked[0].index].id : candidates[0].id
 }
 async function jevPick(prompt: string, candidates: Real[]) {
   const criteria = Object.fromEntries(candidates.map((s) => [s.id, `Session "${s.title}":\n${s.outline.slice(0, 2500)}`]))
-  const answers = await jev("jev-preview", `A developer opened a new session and wrote:\n${prompt}`, { which: { type: "choice", instructions: "Which earlier session is the developer coming back to? Match the work described, not the wording.", criteria } })
+  const answers = await jev("jev-preview", `A developer opened a new session and wrote:\n${prompt}`, {
+    which: { type: "choice", instructions: "Which earlier session is the developer coming back to? Match the work described, not the wording.", criteria },
+  })
   return (answers.which as any).choice as string
 }
 async function votePick(prompt: string, candidates: Real[]) {
@@ -94,11 +119,21 @@ const ranks: number[] = []
 for (const [s, candidates] of picked) {
   for (const scenario of ["bug", "continue"]) {
     let prompt: string
-    try { prompt = await resumePrompt(s, scenario) } catch (e) { console.error(String(e).slice(0, 160)); continue }
+    try {
+      prompt = await resumePrompt(s, scenario)
+    } catch (e) {
+      console.error(String(e).slice(0, 160))
+      continue
+    }
     total += 1
     for (const name of RANKERS) {
       let chosen = ""
-      try { chosen = await rankers[name](prompt, candidates) } catch (e) { console.error(`${name}: ${String(e).slice(0, 120)}`); continue }
+      try {
+        chosen = await rankers[name](prompt, candidates)
+      } catch (e) {
+        console.error(`${name}: ${String(e).slice(0, 120)}`)
+        continue
+      }
       hits[name] ??= {}
       hits[name][scenario] = (hits[name][scenario] ?? 0) + (chosen === s.id ? 1 : 0)
       hits[name].all = (hits[name].all ?? 0) + (chosen === s.id ? 1 : 0)
@@ -112,8 +147,15 @@ for (const [s, candidates] of picked) {
   }
 }
 const per = total / 2
-const lines = [`# Handoff selection on real history`, "", `${total} resume prompts (${per} sessions across ${groups.length} projects, 2 scenarios), candidates = the project's other sessions (2–${Math.max(...groups.map((g) => g.length))}). Hit = the chosen session is the one the prompt was written from.`, "", `| ranker | bug | continue | all |`, `|---|---|---|---|`]
+const lines = [
+  `# Handoff selection on real history`,
+  "",
+  `${total} resume prompts (${per} sessions across ${groups.length} projects, 2 scenarios), candidates = the project's other sessions (2–${Math.max(...groups.map((g) => g.length))}). Hit = the chosen session is the one the prompt was written from.`,
+  "",
+  `| ranker | bug | continue | all |`,
+  `|---|---|---|---|`,
+]
 for (const [name, h] of Object.entries(hits)) lines.push(`| ${name} | ${Math.round((100 * (h.bug ?? 0)) / per)}% | ${Math.round((100 * (h.continue ?? 0)) / per)}% | **${Math.round((100 * (h.all ?? 0)) / total)}%** |`)
 lines.push("", `## bm25 misses (rank of the right session: ${ranks.map((r) => (r === 99 ? "unranked" : `#${r}`)).join(", ")}; within top 2: ${ranks.filter((r) => r <= 2).length} of ${ranks.length})`, "", ...log.map((l) => `- ${l}`))
-writeFileSync(path.join(HANDOFF_OUT, "select-real.md"), lines.join("\n") + "\n")
+writeFileSync(path.join(HANDOFF_OUT, "select-real.md"), `${lines.join("\n")}\n`)
 console.log(lines.slice(0, 12).join("\n"))

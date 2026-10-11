@@ -13,14 +13,16 @@ async function qmd(cwd: string, args: string[]) {
 
 function indexWithQmd(dir: string) {
   const previous = indexing.get(dir) ?? Promise.resolve()
-  const next = previous.then(async () => {
-    if (!existsSync(path.join(dir, QMD_DIR))) {
-      await qmd(dir, ["init"])
-      await qmd(dir, ["collection", "add", ".", "--name", "transcript"])
-    }
-    await qmd(dir, ["update"])
-    await qmd(dir, ["embed"])
-  }).catch(() => undefined)
+  const next = previous
+    .then(async () => {
+      if (!existsSync(path.join(dir, QMD_DIR))) {
+        await qmd(dir, ["init"])
+        await qmd(dir, ["collection", "add", ".", "--name", "transcript"])
+      }
+      await qmd(dir, ["update"])
+      await qmd(dir, ["embed"])
+    })
+    .catch(() => undefined)
   indexing.set(dir, next)
   return next
 }
@@ -46,18 +48,22 @@ export function searchGuide(ref: TranscriptRef): string {
     ].join("\n")
   }
   const ext = ref.mode === "xml" ? "xml" : "md"
-  const layout = ref.mode === "xml"
-    ? [
-        `The full transcript is a folder with one XML file per turn: ${ref.dir}`,
-        "- `index.md`: one line per turn, what the user asked and how the turn ended. Skim it to find the turn you need.",
-        "- `turn-0001.xml`, …: one turn each, `<turn n>` with `<user>` (the message), `<said>` (what you wrote while working), `<tool n name>` holding `<call>`, `<input>` and `<output>`, and `<final_reply>`.",
-      ]
-    : [
-        `The full transcript is a folder of markdown files: ${ref.dir}`,
-        "- `index.md`: one line per turn, what the user asked and how the turn ended. Skim it to find the turn you need.",
-        "- `turn-0001.md`, …: one turn each. `## User` (the message), `### [tool 3/12] Bash: …` for every tool call with `[output of tool 3]` below it, and `## Final reply`.",
-      ]
-  const habits = "Search for more than one phrasing (the exact term, a synonym, a file or function name, an error string) before you conclude something isn't there. Read the whole turn file around a hit: the answer is often a few calls before or after it."
+  const layout =
+    ref.mode === "xml"
+      ? [
+          `The full transcript is a folder with one XML file per turn: ${ref.dir}`,
+          "- `index.md`: one line per turn, what the user asked and how the turn ended. Skim it to find the turn you need.",
+          "- `turn-0001.xml`, …: one turn each, `<turn n>` with `<user>` (the message), `<said>` (what you wrote while working), `<tool n name>` holding `<call>`, `<input>` and `<output>`, and `<final_reply>`.",
+          "- `turn-0001-subagent-1.xml`, …: the whole run of a subagent launched in that turn, same layout. The turn itself only has the subagent's report; what the subagent saw and ran is here.",
+        ]
+      : [
+          `The full transcript is a folder of markdown files: ${ref.dir}`,
+          "- `index.md`: one line per turn, what the user asked and how the turn ended. Skim it to find the turn you need.",
+          "- `turn-0001.md`, …: one turn each. `## User` (the message), `### [tool 3/12] Bash: …` for every tool call with `[output of tool 3]` below it, and `## Final reply`.",
+          "- `turn-0001-subagent-1.md`, …: the whole run of a subagent launched in that turn, same layout. The turn itself only has the subagent's report; what the subagent saw and ran is here.",
+        ]
+  const habits =
+    "Search for more than one phrasing (the exact term, a synonym, a file or function name, an error string) before you conclude something isn't there. Read the whole turn file around a hit: the answer is often a few calls before or after it."
   if (ref.mode === "markdown" || ref.mode === "xml") {
     return [
       ...layout,

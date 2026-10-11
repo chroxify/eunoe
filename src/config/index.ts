@@ -1,14 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
-import { DEFAULTS, EUNOE_DIR, MODES, paths, SCOPES, SEARCH_MODES, TEXT_TUNABLES, TUNABLES } from "./constants"
+import { DEFAULTS, EUNOE_DIR, MODES, paths, SCOPES, SEARCH_MODES, TEXT_TUNABLES, TUNABLES, TURN_CAP_MIN, TURN_CAP_OFF } from "./constants"
 import type { Config, Mode, SessionSettings, Tunable, Tunables } from "./types"
 
-const VALID: { [K in Tunable]: (value: unknown) => value is Tunables[K] } = {
+const validators: { [K in Tunable]: (value: unknown) => value is Tunables[K] } = {
   compactAt: (value): value is number => typeof value === "number" && value > 0 && value <= 1,
   keepTurns: (value): value is number | "all" => value === "all" || (Number.isInteger(value) && (value as number) >= 0),
   keep: (value): value is number => Number.isInteger(value) && (value as number) >= 1,
   budget: (value): value is number => Number.isInteger(value) && (value as number) >= 1_000,
+  turnCap: (value): value is number | "off" => value === TURN_CAP_OFF || (Number.isInteger(value) && (value as number) >= TURN_CAP_MIN),
   search: (value): value is Tunables["search"] => SEARCH_MODES.includes(value as Tunables["search"]),
   rerank: (value): value is string => typeof value === "string" && /^[\w.-]+$/.test(value),
 }
@@ -16,8 +17,8 @@ const VALID: { [K in Tunable]: (value: unknown) => value is Tunables[K] } = {
 const isMode = (value: unknown): value is Mode => MODES.includes(value as Mode)
 
 export function parseTunable<K extends Tunable>(key: K, raw: string): Tunables[K] | null {
-  const value = TEXT_TUNABLES.includes(key) || raw === "all" ? raw : Number(raw.replace(/[_,]/g, ""))
-  return VALID[key](value) ? value as Tunables[K] : null
+  const value = TEXT_TUNABLES.includes(key) || raw === "all" || raw === TURN_CAP_OFF ? raw : Number(raw.replace(/[_,]/g, ""))
+  return validators[key](value) ? (value as Tunables[K]) : null
 }
 
 function normalizeSession(value: unknown): SessionSettings | null {
@@ -26,20 +27,22 @@ function normalizeSession(value: unknown): SessionSettings | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null
   const raw = value as Record<string, unknown>
   const settings: SessionSettings = isMode(raw.mode) ? { mode: raw.mode } : {}
-  for (const key of TUNABLES) if (VALID[key](raw[key])) Object.assign(settings, { [key]: raw[key] })
+  for (const key of TUNABLES) if (validators[key](raw[key])) Object.assign(settings, { [key]: raw[key] })
   return settings
 }
 
-export function normalizeConfig(raw: Record<string, any>): Config {
-  const config: Config = { ...DEFAULTS, ...raw }
+export function normalizeConfig(raw: Record<string, unknown>): Config {
+  const config = { ...DEFAULTS, ...raw } as Config
   if (!isMode(config.mode)) config.mode = DEFAULTS.mode
   if (!SCOPES.includes(config.scope)) config.scope = DEFAULTS.scope
-  for (const key of TUNABLES) if (!VALID[key](config[key])) Object.assign(config, { [key]: DEFAULTS[key] })
+  for (const key of TUNABLES) if (!validators[key](config[key])) Object.assign(config, { [key]: DEFAULTS[key] })
   const sessions = config.sessions && typeof config.sessions === "object" && !Array.isArray(config.sessions) ? config.sessions : {}
-  config.sessions = Object.fromEntries(Object.entries(sessions).flatMap(([id, value]) => {
-    const settings = normalizeSession(value)
-    return settings ? [[id, settings]] : []
-  }))
+  config.sessions = Object.fromEntries(
+    Object.entries(sessions).flatMap(([id, value]) => {
+      const settings = normalizeSession(value)
+      return settings ? [[id, settings]] : []
+    }),
+  )
   if (!Number.isInteger(config.port)) config.port = DEFAULTS.port
   if (!Array.isArray(config.claudeConfigDirs)) config.claudeConfigDirs = []
   return config
@@ -47,7 +50,7 @@ export function normalizeConfig(raw: Record<string, any>): Config {
 
 let cached: { mtimeMs: number; config: Config } | null = null
 
-export function loadConfig(): Config {
+export function readConfig(): Config {
   let mtimeMs: number
   try {
     mtimeMs = statSync(paths.config).mtimeMs
@@ -58,9 +61,7 @@ export function loadConfig(): Config {
   let config = DEFAULTS
   try {
     config = normalizeConfig(JSON.parse(readFileSync(paths.config, "utf8")))
-  } catch (error) {
-    console.error(`[eunoe] ${paths.config} is not valid JSON; using defaults`, error)
-  }
+  } catch (_error) {}
   cached = { mtimeMs, config }
   return config
 }
@@ -68,7 +69,7 @@ export function loadConfig(): Config {
 export function saveConfig(patch: Partial<Config>) {
   mkdirSync(EUNOE_DIR, { recursive: true })
   const current = existsSync(paths.config) ? JSON.parse(readFileSync(paths.config, "utf8")) : {}
-  writeFileSync(paths.config, JSON.stringify({ ...current, ...patch }, null, 2) + "\n")
+  writeFileSync(paths.config, `${JSON.stringify({ ...current, ...patch }, null, 2)}\n`)
 }
 
 export function claudeConfigDirs(config: Config): string[] {
@@ -91,6 +92,4 @@ export function settingsFor(config: Config, sessionId: string | null): Config {
   return { ...config, ...overrides(sessionId ? config.sessions[sessionId] : undefined), mode: modeFor(config, sessionId) }
 }
 
-export function compactionOwner(config: Config): Mode {
-  return config.scope === "all" ? config.mode : "off"
-}
+export const compactionOwner = (config: Config): Mode => modeFor(config, null)

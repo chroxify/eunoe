@@ -1,0 +1,61 @@
+import { STATUS_WINDOW_MS, THREAD_SUFFIX } from "./constants"
+import type { RequestRecord, SessionStats, Totals } from "./types"
+
+const sessionOf = (record: RequestRecord): string | null => (typeof record.thread === "string" ? record.thread.replace(THREAD_SUFFIX, "") : null)
+
+const inputOf = (record: RequestRecord) => record.input ?? 0
+
+function scaled(record: RequestRecord, chars: number | undefined): number | null {
+  const input = inputOf(record)
+  const charsOut = record.charsOut ?? 0
+  return input > 0 && charsOut > 0 && chars && chars > 0 ? Math.round((input * chars) / charsOut) : null
+}
+
+const fixedTokens = (record: RequestRecord) => scaled(record, record.charsFixed)
+const plainTokens = (record: RequestRecord) => scaled(record, record.charsIn)
+
+export function withinWindow(records: RequestRecord[], now = Date.now(), window = STATUS_WINDOW_MS): RequestRecord[] {
+  return records.filter((record) => now - Date.parse(record.ts) <= window)
+}
+
+export function perSession(records: RequestRecord[]): Map<string, SessionStats> {
+  const stats = new Map<string, SessionStats>()
+  for (const record of records) {
+    const id = sessionOf(record)
+    if (!id || inputOf(record) <= 0) continue
+    const previous = stats.get(id)
+    stats.set(id, {
+      context: inputOf(record),
+      fixed: fixedTokens(record),
+      plain: plainTokens(record),
+      turns: record.turns ?? previous?.turns ?? null,
+      requests: (previous?.requests ?? 0) + 1,
+      folds: (previous?.folds ?? 0) + (record.compacted ? 1 : 0),
+      lastSeen: record.ts,
+    })
+  }
+  return stats
+}
+
+export function totals(records: RequestRecord[]): Totals {
+  const out: Totals = { requests: 0, cacheRead: 0, cacheWrite: 0, uncached: 0, folds: 0, lastFold: null, sent: 0, saved: 0 }
+  for (const record of records) {
+    if (inputOf(record) <= 0) continue
+    out.requests += 1
+    out.cacheRead += record.cacheRead ?? 0
+    out.cacheWrite += record.cacheWrite ?? 0
+    out.uncached += record.uncached ?? 0
+    if (record.compacted) {
+      out.folds += 1
+      out.lastFold = record.ts
+    }
+    const plain = plainTokens(record)
+    if (plain !== null) {
+      out.sent += inputOf(record)
+      out.saved += plain - inputOf(record)
+    }
+  }
+  return out
+}
+
+export const savedShare = (context: number, plain: number | null): number | null => (plain && plain > context ? 1 - context / plain : plain ? 0 : null)

@@ -1,6 +1,6 @@
 import { candidateOf, candidatesHere, peekText, shortId } from "../sessions"
+import { fail, line } from "../terminal/ui"
 import type { Command } from "../types"
-import { fail, line } from "../ui"
 
 export const peek: Command = {
   summary: "Show the excerpts of an earlier session that match some words",

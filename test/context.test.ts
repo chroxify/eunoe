@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { CLEARED_OUTPUT } from "../src/context/prompts"
-import { appendSystem, clearToolResults, compactMessages, countToolResults, tailMessages, trimMessages } from "../src/context/strategies"
-import { isPrompt, reduceTurn, splitTurns, turnFingerprint } from "../src/context/turns"
+import { CLEARED_OUTPUT } from "../src/context/constants"
+import { appendSystem, clearToolResults, compactMessages, countToolResults, tailMessages, trimMessages } from "../src/context/fold/strategies"
+import { isPrompt, reduceTurn, splitTurns, turnFingerprint } from "../src/context/fold/turns"
 import type { Message } from "../src/context/types"
 import { call, reply, result, system, turn, user } from "./fixtures"
 
@@ -35,14 +35,33 @@ describe("turns", () => {
     const loaded: Message[] = [
       user("ship it"),
       { role: "assistant", content: [{ type: "tool_use", id: "s1", name: "Skill", input: { skill: "deploy" } }] },
-      { role: "user", content: [{ type: "tool_result", tool_use_id: "s1", content: "Launching skill: deploy" }, { type: "text", text: skill }] },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "s1", content: "Launching skill: deploy" },
+          { type: "text", text: skill },
+        ],
+      },
       call("b1"),
-      { role: "user", content: [{ type: "tool_result", tool_use_id: "b1", content: "x".repeat(500) }, { type: "text", text: "<system-reminder>todo list changed</system-reminder>" }, { type: "text", text: "use the eu region" }] },
+      {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "b1", content: "x".repeat(500) },
+          { type: "text", text: "<system-reminder>todo list changed</system-reminder>" },
+          { type: "text", text: "use the eu region" },
+        ],
+      },
       reply("shipped"),
     ]
     expect(reduceTurn(loaded)).toEqual([
       user("ship it"),
-      { role: "user", content: [{ type: "text", text: skill }, { type: "text", text: "use the eu region" }] },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: skill },
+          { type: "text", text: "use the eu region" },
+        ],
+      },
       { role: "assistant", content: [{ type: "text", text: "shipped" }] },
     ])
   })
@@ -135,15 +154,25 @@ describe("clearing tool output", () => {
 })
 
 test("system append moves the last cache breakpoint onto the new block", () => {
-  const out = appendSystem([{ type: "text", text: "a" }, { type: "text", text: "b", cache_control: { type: "ephemeral" } }], "c")
-  expect(out).toEqual([{ type: "text", text: "a" }, { type: "text", text: "b" }, { type: "text", text: "c", cache_control: { type: "ephemeral" } }])
+  const out = appendSystem(
+    [
+      { type: "text", text: "a" },
+      { type: "text", text: "b", cache_control: { type: "ephemeral" } },
+    ],
+    "c",
+  )
+  expect(out).toEqual([
+    { type: "text", text: "a" },
+    { type: "text", text: "b" },
+    { type: "text", text: "c", cache_control: { type: "ephemeral" } },
+  ])
 })
 
 describe("surrogate safety", () => {
   test("clipping never leaves half an emoji, and the forwarded body is well-formed JSON", async () => {
     const { clip, truncate, wellFormed } = await import("../src/context/content")
-    const text = `abc${"😀".repeat(200)}`
-    for (let max = 1; max < 12; max += 1) expect(JSON.stringify(clip(text, max))).not.toMatch(/\\ud83d(?!\\ude00)/i)
+    const emoji = `abc${"😀".repeat(200)}`
+    for (let max = 1; max < 12; max += 1) expect(JSON.stringify(clip(emoji, max))).not.toMatch(/\\ud83d(?!\\ude00)/i)
     expect(truncate("ab😀", 3)).toBe("ab")
     expect(JSON.stringify({ a: "x\ud83d", b: ["\ude00y"] }, wellFormed)).toBe('{"a":"x�","b":["�y"]}')
   })

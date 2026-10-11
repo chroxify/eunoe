@@ -23,7 +23,8 @@ export const ARMS: Arm[] = process.env.BENCH_ARMS?.split(",") ?? ["native", "nat
 export const CONT_ARMS = ARMS.filter((a) => a !== "full")
 export const MAX_TURNS = 60
 export const TOOLS = "Bash Read Edit Write MultiEdit NotebookEdit Glob Grep WebFetch"
-export const DENIED = "Bash(git push:*) Bash(gh:*) Bash(npm publish:*) Bash(bun publish:*) Bash(pnpm publish:*) Bash(yarn publish:*) Bash(vercel:*) Bash(wrangler:*) Bash(fly:*) Bash(eas:*) Bash(xcrun altool:*) Bash(xcrun notarytool:*) Bash(fastlane:*) Bash(kubectl:*) Bash(terraform:*) Bash(docker push:*) Bash(curl -X POST:*) Bash(curl --data:*) Agent Task WebSearch"
+export const DENIED =
+  "Bash(git push:*) Bash(gh:*) Bash(npm publish:*) Bash(bun publish:*) Bash(pnpm publish:*) Bash(yarn publish:*) Bash(vercel:*) Bash(wrangler:*) Bash(fly:*) Bash(eas:*) Bash(xcrun altool:*) Bash(xcrun notarytool:*) Bash(fastlane:*) Bash(kubectl:*) Bash(terraform:*) Bash(docker push:*) Bash(curl -X POST:*) Bash(curl --data:*) Agent Task WebSearch"
 
 export const VALIDATE_ARMS = ["native", "native+guide", "tail", "eunoe", "rolling", "trim", "full"] as const
 export const VALIDATE_CONT_ARMS = VALIDATE_ARMS.filter((a) => a !== "full")
@@ -38,7 +39,12 @@ export const VALIDATE_BUCKETS: Array<[string, (n: number) => boolean]> = [
 export const NON_INFERIORITY = -10
 export const BOOTSTRAP = 20_000
 
-export const REPORT_BUCKETS: Array<[string, (n: number) => boolean]> = [["0-3", (n) => n <= 3], ["4-10", (n) => n >= 4 && n <= 10], ["11-25", (n) => n >= 11 && n <= 25], ["26+", (n) => n >= 26]]
+export const REPORT_BUCKETS: Array<[string, (n: number) => boolean]> = [
+  ["0-3", (n) => n <= 3],
+  ["4-10", (n) => n >= 4 && n <= 10],
+  ["11-25", (n) => n >= 11 && n <= 25],
+  ["26+", (n) => n >= 26],
+]
 
 export const GENERATOR = `Below is the complete history of a real coding session, turn by turn, up to the moment its context window filled up. Each turn is labelled with how many turns before the cut it happened, and includes the user's message, what the agent said, every tool call, and the tool output.
 
@@ -91,11 +97,7 @@ For every answer give:
 
 Judge only agreement with the reference. Do not reward length, confidence or style. "unknown" and "wrong" both score 0, but they are different failures and must be labelled apart.
 
-${questions.map((q) => [
-    `Q${q.id} (${q.type}): ${q.question}`,
-    `REFERENCE: ${q.answer}`,
-    ...labels.map((l) => `${l}: ${String(sets[l].find((a: any) => a.id === q.id)?.answer ?? "(no answer)").slice(0, 1000)}`),
-  ].join("\n")).join("\n\n")}
+${questions.map((q) => [`Q${q.id} (${q.type}): ${q.question}`, `REFERENCE: ${q.answer}`, ...labels.map((l) => `${l}: ${String(sets[l].find((a: any) => a.id === q.id)?.answer ?? "(no answer)").slice(0, 1000)}`)].join("\n")).join("\n\n")}
 
 Reply with only JSON: {"grades":{${labels.map((l) => `"${l}":[{"id":1,"score":0,"label":"unknown"}, …]`).join(",")}}}`
 }
@@ -112,7 +114,12 @@ ${claudeMd.slice(0, 20_000) || "(none)"}
 === SESSION HISTORY ===
 ${material}`
 
-export const CONTINUATION_JUDGE = (prompt: string, reference: string, instructions: any[], sets: Record<string, string>) => `A coding session was compacted and then continued by several agents. You get the user's next message, what the REAL agent did in response at the time (the reference), the standing instructions active at that moment, and what each agent did on the same message after compaction.
+export const CONTINUATION_JUDGE = (
+  prompt: string,
+  reference: string,
+  instructions: any[],
+  sets: Record<string, string>,
+) => `A coding session was compacted and then continued by several agents. You get the user's next message, what the REAL agent did in response at the time (the reference), the standing instructions active at that moment, and what each agent did on the same message after compaction.
 
 Score each agent:
   "fidelity": 2 = it did what the real continuation did, or something defensibly equivalent given the same instruction · 1 = partly, or headed the right way but stopped short or drifted · 0 = did something else, did nothing useful, or asked the user to repeat what the session already settled
@@ -131,6 +138,14 @@ ${reference}
 === STANDING INSTRUCTIONS ===
 ${instructions.map((i) => `${i.id}. [${i.source}] ${i.text}`).join("\n") || "(none)"}
 
-${Object.entries(sets).map(([label, turn]) => `=== AGENT ${label} ===\n${turn}`).join("\n\n")}
+${Object.entries(sets)
+  .map(([label, turn]) => `=== AGENT ${label} ===\n${turn}`)
+  .join("\n\n")}
 
-Reply with only JSON: {"grades":{${Object.keys(sets).map((l) => `"${l}":{"fidelity":0,"violations":[],"redundant":0,"why":"..."}`).join(",")}}}`
+Reply with only JSON: {"grades":{${Object.keys(sets)
+  .map((l) => `"${l}":{"fidelity":0,"violations":[],"redundant":0,"why":"..."}`)
+  .join(",")}}}`
+
+export const EDIT_TOOLS = ["Edit", "Write", "MultiEdit"]
+export const READ_TOOLS = ["Read", "Grep", "Glob"]
+export const READ_COMMAND = /^(cat|grep|rg|head|tail|sed -n|ls|find|jq|qmd)\b/

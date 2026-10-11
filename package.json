@@ -8,6 +8,7 @@
     "url": "git+https://github.com/chroxify/eunoe.git"
   },
   "homepage": "https://github.com/chroxify/eunoe#readme",
+  "bugs": "https://github.com/chroxify/eunoe/issues",
   "keywords": [
     "claude-code",
     "claude",
@@ -32,13 +33,28 @@
   "scripts": {
     "start": "bun src/cli/main.ts serve",
     "test": "bun test",
-    "typecheck": "tsc --noEmit -p ."
+    "check-types": "tsc --noEmit -p .",
+    "lint": "biome check . && bun lint:conventions",
+    "lint:conventions": "bun scripts/lint-conventions.ts",
+    "format": "biome check .",
+    "format:fix": "biome check . --write",
+    "prepare": "husky"
   },
   "devDependencies": {
+    "@babel/parser": "7.27.0",
+    "@biomejs/biome": "2.5.9",
     "@types/bun": "^1.4.2",
+    "husky": "9.1.7",
+    "knip": "6.41.0",
+    "lint-staged": "16.4.0",
     "typescript": "^7.0.2"
   },
   "publishConfig": {
     "access": "public"
+  },
+  "lint-staged": {
+    "*.{js,ts,json,jsonc,md,yml}": [
+      "biome check --write --files-ignore-unknown=true --no-errors-on-unmatched"
+    ]
   }
 }

@@ -37,7 +37,11 @@ export async function claudeOnce(args: string[], o: { cwd: string; env?: Record<
   const account = credits || !o.account || (o.account === CSWAP_ACCOUNT && !process.env.BENCH_CSWAP_PIN) ? null : o.account
   const cli = ["claude", "-p", "--output-format", "json", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}', ...args]
   const proc = Bun.spawn(account ? ["cswap", "run", account, "--", ...cli.slice(1)] : cli, {
-    cwd: o.cwd, env: { ...process.env, ...(account ? {} : { CLAUDE_CONFIG_DIR: CONFIG_DIR }), ...authEnv(), ...o.env }, stdin: Bun.file(promptFile), stdout: "pipe", stderr: "pipe",
+    cwd: o.cwd,
+    env: { ...process.env, ...(account ? {} : { CLAUDE_CONFIG_DIR: CONFIG_DIR }), ...authEnv(), ...o.env },
+    stdin: Bun.file(promptFile),
+    stdout: "pipe",
+    stderr: "pipe",
   })
   const timer = setTimeout(() => proc.kill(), 25 * 60_000)
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
@@ -45,11 +49,40 @@ export async function claudeOnce(args: string[], o: { cwd: string; env?: Record<
   await proc.exited
   rmSync(promptFile, { force: true })
   let json: any
-  try { json = JSON.parse(stdout) } catch { json = { is_error: true, result: `${stdout.slice(0, 300)} ${stderr.slice(0, 300)}` } }
+  try {
+    json = JSON.parse(stdout)
+  } catch {
+    json = { is_error: true, result: `${stdout.slice(0, 300)} ${stderr.slice(0, 300)}` }
+  }
   const limited = isLimit(String(json.result ?? ""))
   if (!limited && !credits) limitedSince = null
   if (limited) limitedUntil.set(account ?? CSWAP_ACCOUNT, Date.now() + LIMIT_HOLD_MS)
   return { ...json, wallMs: Date.now() - started, credits, account: account ?? CSWAP_ACCOUNT }
+}
+
+async function backoffFor(result: string, paidWithCredits: boolean, account: string | undefined): Promise<number | null> {
+  if (isAuth(result)) {
+    console.log(`  login expired on the bench account; refreshing through cswap`)
+    await refreshLogin()
+    return 2_000
+  }
+  if (isCredit(result)) {
+    if (!creditsDead) console.log(`  API credits are exhausted; staying on the subscription from now on`)
+    creditsDead = true
+    creditsUntil = 0
+    return 10 * 60_000
+  }
+  if (!isLimit(result)) return 5_000
+  if (account !== undefined && chooseAccount() !== account) throw new AccountLimited(`account ${account} limited`)
+  if (paidWithCredits) return 60_000
+  limitedSince ??= Date.now()
+  if (API_KEY && !creditsDead && Date.now() - limitedSince >= CREDITS_AFTER_MS) {
+    creditsUntil = Date.now() + CREDITS_FOR_MS
+    limitedSince = null
+    console.log(`  subscription limited for ${Math.round(CREDITS_AFTER_MS / 60_000)}m; using API credits until ${new Date(creditsUntil).toLocaleTimeString()}`)
+    return null
+  }
+  return 10 * 60_000
 }
 
 export async function claude(args: string[] | (() => string[]), o: { cwd: string; env?: Record<string, string>; stdin: string; account?: string }): Promise<any> {
@@ -57,31 +90,8 @@ export async function claude(args: string[] | (() => string[]), o: { cwd: string
     const out = await claudeOnce(typeof args === "function" ? args() : args, o)
     const result = String(out.result ?? "")
     if (!retryable(result) || attempt >= 40) return out
-    let wait = 5_000
-    if (isAuth(result)) {
-      console.log(`  login expired on the bench account; refreshing through cswap`)
-      await refreshLogin()
-      wait = 2_000
-    } else if (isCredit(result)) {
-      if (!creditsDead) console.log(`  API credits are exhausted; staying on the subscription from now on`)
-      creditsDead = true
-      creditsUntil = 0
-      wait = 10 * 60_000
-    } else if (isLimit(result)) {
-      if (o.account !== undefined && chooseAccount() !== (o.account ?? CSWAP_ACCOUNT)) throw new AccountLimited(`account ${o.account} limited`)
-      if (out.credits) {
-        wait = 60_000
-      } else {
-        limitedSince ??= Date.now()
-        if (API_KEY && !creditsDead && Date.now() - limitedSince >= CREDITS_AFTER_MS) {
-          creditsUntil = Date.now() + CREDITS_FOR_MS
-          limitedSince = null
-          console.log(`  subscription limited for ${Math.round(CREDITS_AFTER_MS / 60_000)}m; using API credits until ${new Date(creditsUntil).toLocaleTimeString()}`)
-          continue
-        }
-        wait = 10 * 60_000
-      }
-    }
+    const wait = await backoffFor(result, Boolean(out.credits), o.account)
+    if (wait === null) continue
     console.log(`  retrying in ${Math.round(wait / 1000)}s: ${result.slice(0, 80)}`)
     await Bun.sleep(wait)
   }
