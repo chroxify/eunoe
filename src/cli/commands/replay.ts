@@ -4,14 +4,16 @@ import path from "node:path"
 import { claudeConfigDirs, DEFAULTS, parseTunable, readConfig } from "../../config"
 import { listEntries, projectFolderName, projectFolders } from "../../transcript/locate"
 import type { Command } from "../command"
+import { cleanupDays } from "../proxy/claude-settings"
 import { recentRequests } from "../proxy/inspect"
-import type { ReplayedSession, ReplayOptions } from "../replay"
+import type { ReplayedSession, ReplayFailure, ReplayOptions } from "../replay"
 import { shortId } from "../sessions"
-import { c, fail, line, percent, plural, rows, table, tilde, tokens, useColor } from "../terminal/ui"
+import { c, fail, line, percent, plural, rows, table, tilde, tokens, useColor, warn } from "../terminal/ui"
 
 interface Target {
   file: string
   bytes: number
+  lastActive: number
 }
 
 const WINDOW = 1_000_000
@@ -28,7 +30,8 @@ function targets(configDirs: string[], ids: string[], here: string | null): Targ
       const id = name.slice(0, -".jsonl".length)
       if (!wanted(id) || seen.has(id)) continue
       const file = path.join(folder, name)
-      seen.set(id, { file, bytes: statSync(file).size })
+      const stat = statSync(file)
+      seen.set(id, { file, bytes: stat.size, lastActive: stat.mtimeMs })
     }
   }
   return [...seen.values()].sort((a, b) => b.bytes - a.bytes)
@@ -42,12 +45,21 @@ function fixedTokens(): { value: number; measured: boolean } {
   return { value: sizes[Math.floor(sizes.length / 2)], measured: true }
 }
 
+const day = (ms: number) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+
 const duration = (ms: number) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1000))}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`)
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`)
 const fewer = (plain: number, eunoe: number) => (plain > 0 ? percent(1 - eunoe / plain) : "–")
 
-async function replayAll(list: Target[], options: ReplayOptions, onDone: (done: number, bytes: number) => void): Promise<ReplayedSession[]> {
+function historyLine(list: Target[], keepDays: number): string {
+  const active = list.map((t) => t.lastActive)
+  const span = `${day(Math.min(...active))} – ${day(Math.max(...active))}`
+  return `${span}  ${c.dim(`· the sessions still on disk; Claude Code deletes sessions idle for ${keepDays} days (cleanupPeriodDays), so totals cover a moving window`)}`
+}
+
+async function replayAll(list: Target[], options: ReplayOptions, onDone: (done: number, bytes: number) => void): Promise<{ results: ReplayedSession[]; failures: ReplayFailure[] }> {
   const results: ReplayedSession[] = []
+  const failures: ReplayFailure[] = []
   const queue = [...list]
   let bytesDone = 0
   const workers = Math.max(1, Math.min(8, cpus().length - 1, list.length))
@@ -56,28 +68,46 @@ async function replayAll(list: Target[], options: ReplayOptions, onDone: (done: 
       { length: workers },
       () =>
         new Promise<void>((resolve) => {
-          const worker = new Worker(new URL("../replay/worker.ts", import.meta.url).href)
+          let worker = new Worker(new URL("../replay/worker.ts", import.meta.url).href)
+          let current: Target | undefined
+          const finish = (target: Target) => {
+            bytesDone += target.bytes
+            onDone(results.length + failures.length, bytesDone)
+          }
           const next = () => {
-            const target = queue.shift()
-            if (!target) {
+            current = queue.shift()
+            if (!current) {
               worker.terminate()
               resolve()
               return
             }
-            worker.postMessage({ file: target.file, options })
+            worker.postMessage({ file: current.file, options })
           }
-          worker.onmessage = (event: MessageEvent<ReplayedSession>) => {
-            results.push(event.data)
-            bytesDone += event.data.bytes
-            onDone(results.length, bytesDone)
-            next()
+          const listen = () => {
+            worker.onmessage = (event: MessageEvent<ReplayedSession | ReplayFailure>) => {
+              if ("error" in event.data) failures.push(event.data)
+              else results.push(event.data)
+              if (current) finish(current)
+              next()
+            }
+            worker.onerror = (event) => {
+              event.preventDefault()
+              if (current) {
+                failures.push({ file: current.file, error: event.message || "worker crashed" })
+                finish(current)
+              }
+              worker.terminate()
+              worker = new Worker(new URL("../replay/worker.ts", import.meta.url).href)
+              listen()
+              next()
+            }
           }
-          worker.onerror = () => next()
+          listen()
           next()
         }),
     ),
   )
-  return results
+  return { results, failures }
 }
 
 export const replay: Command = {
@@ -105,7 +135,8 @@ export const replay: Command = {
     const config = readConfig()
     const turnCap = capAt === -1 ? config.turnCap : parseTunable("turnCap", args[capAt + 1] ?? "")
     if (turnCap === null) fail("--turn-cap needs a token count or off", "eunoe replay --turn-cap off")
-    const list = targets(claudeConfigDirs(config), ids, args.includes("--here") ? process.cwd() : null)
+    const configDirs = claudeConfigDirs(config)
+    const list = targets(configDirs, ids, args.includes("--here") ? process.cwd() : null)
     if (list.length === 0) fail("No Claude Code sessions found.")
     const totalBytes = list.reduce((total, entry) => total + entry.bytes, 0)
     const fixed = fixedTokens()
@@ -113,7 +144,7 @@ export const replay: Command = {
     const options: ReplayOptions = { config: { ...config, turnCap, mode: config.mode === "off" ? DEFAULTS.mode : config.mode }, window, fixedTokens: fixed.value }
     const started = Date.now()
     const progress = useColor && process.stdout.isTTY
-    const results = await replayAll(list, options, (done, doneBytes) => {
+    const { results, failures } = await replayAll(list, options, (done, doneBytes) => {
       if (!progress) return
       const left = doneBytes > 0 ? ` · ~${duration(((Date.now() - started) / doneBytes) * (totalBytes - doneBytes))} left` : ""
       process.stdout.write(`\r\x1b[K  ${c.dim(`Replaying ${done} / ${list.length} sessions · ${size(doneBytes)} of ${size(totalBytes)}${left}`)}`)
@@ -134,6 +165,7 @@ export const replay: Command = {
     rows(
       [
         ["Sessions", `${c.bold(String(compared.length))} replayed  ${c.dim("·")}  ${size(totalBytes)}  ${c.dim("·")}  ${duration(Date.now() - started)}`],
+        ["History", historyLine(list, cleanupDays(configDirs))],
         ["Requests", c.bold(sum.requests.toLocaleString())],
         ["Window", `${tokens(window)}  ${c.dim(`· ${tokens(fixed.value)} of it system prompt and tools, ${fixed.measured ? "from your logged requests" : "assumed"}`)}`],
       ],
@@ -188,6 +220,10 @@ export const replay: Command = {
           c.dim(plural(r.folds, "fold")),
         ]),
       )
+    }
+    if (failures.length > 0) {
+      line()
+      warn(`${plural(failures.length, "session")} couldn't be replayed and ${failures.length === 1 ? "is" : "are"} not counted: ${failures.map((f) => `${shortId(path.basename(f.file, ".jsonl"))} (${f.error})`).join(", ")}`)
     }
     line()
   },

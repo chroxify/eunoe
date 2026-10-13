@@ -7,6 +7,8 @@ export interface Settings {
   [key: string]: unknown
 }
 
+const CLAUDE_CLEANUP_DAYS = 30
+
 export const BLOCKING_LIMIT_ENV = "CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE"
 export const BLOCKING_LIMIT_OFF = "1000000000"
 
@@ -42,6 +44,14 @@ export function readSettings(dir: string): Settings {
   } catch {
     return {}
   }
+}
+
+export function cleanupDays(configDirs: string[]): number {
+  for (const dir of configDirs) {
+    const days = readSettings(dir).cleanupPeriodDays
+    if (typeof days === "number") return days
+  }
+  return CLAUDE_CLEANUP_DAYS
 }
 
 export function editSettings(dirs: string[], edit: (settings: Settings) => Settings): string[] {

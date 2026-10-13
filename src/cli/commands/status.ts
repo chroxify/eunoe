@@ -100,7 +100,7 @@ export const status: Command = {
     const routed = routedDirs(config)
     const all = recentRequests(Number.POSITIVE_INFINITY)
     const recent = all.slice(-RECENT_REQUESTS)
-    const sum = totals(withinWindow(recent))
+    const sum = totals(withinWindow(all))
     const allTime = totals(all)
 
     line()
@@ -114,7 +114,7 @@ export const status: Command = {
       ["Recall", recallLine(config, recent)],
     ])
 
-    sessionsTable(config, perSession(recent))
+    sessionsTable(config, perSession(all))
 
     if (sum.requests) summary(c.dim("Last 24h"), sum)
     if (allTime.requests > sum.requests) summary(`${c.dim("All time")}  ${c.dim(`since ${new Date(all[0].ts).toLocaleDateString()}`)}`, allTime)

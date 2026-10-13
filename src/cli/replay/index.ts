@@ -36,6 +36,11 @@ export interface ReplayedSession extends Replay {
   ms: number
 }
 
+export interface ReplayFailure {
+  file: string
+  error: string
+}
+
 export const REPLAY_NATIVE_COMPACT_AT = 0.92
 
 const NATIVE_SUMMARY_CHARS = 30_000
