@@ -1,4 +1,4 @@
-import { statSync } from "node:fs"
+import { closeSync, openSync, readSync, statSync } from "node:fs"
 import { cpus } from "node:os"
 import path from "node:path"
 import { claudeConfigDirs, DEFAULTS, parseTunable, readConfig } from "../../config"
@@ -17,6 +17,7 @@ interface Target {
 }
 
 const WINDOW = 1_000_000
+const HEAD_BYTES = 64 * 1024
 const TOP_SESSIONS = 10
 
 function targets(configDirs: string[], ids: string[], here: string | null): Target[] {
@@ -51,9 +52,23 @@ const duration = (ms: number) => (ms < 60_000 ? `${Math.max(1, Math.round(ms / 1
 const size = (bytes: number) => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`)
 const fewer = (plain: number, eunoe: number) => (plain > 0 ? percent(1 - eunoe / plain) : "–")
 
+function startedAt(target: Target): number {
+  const buffer = Buffer.alloc(HEAD_BYTES)
+  let read = 0
+  try {
+    const fd = openSync(target.file, "r")
+    read = readSync(fd, buffer, 0, HEAD_BYTES, 0)
+    closeSync(fd)
+  } catch {
+    return target.lastActive
+  }
+  const found = /"timestamp":"([^"]+)"/.exec(buffer.toString("utf8", 0, read))
+  const at = found ? Date.parse(found[1]) : Number.NaN
+  return Number.isNaN(at) ? target.lastActive : Math.min(at, target.lastActive)
+}
+
 function historyLine(list: Target[], keepDays: number): string {
-  const active = list.map((t) => t.lastActive)
-  const span = `${day(Math.min(...active))} – ${day(Math.max(...active))}`
+  const span = `${day(Math.min(...list.map(startedAt)))} – ${day(Math.max(...list.map((t) => t.lastActive)))}`
   return `${span}  ${c.dim(`· the sessions still on disk; Claude Code deletes sessions idle for ${keepDays} days (cleanupPeriodDays), so totals cover a moving window`)}`
 }
 
@@ -164,7 +179,7 @@ export const replay: Command = {
     line()
     rows(
       [
-        ["Sessions", `${c.bold(String(compared.length))} replayed  ${c.dim("·")}  ${size(totalBytes)}  ${c.dim("·")}  ${duration(Date.now() - started)}`],
+        ["Sessions", `${c.bold(compared.length.toLocaleString())} replayed  ${c.dim("·")}  ${size(totalBytes)}  ${c.dim("·")}  ${duration(Date.now() - started)}`],
         ["History", historyLine(list, cleanupDays(configDirs))],
         ["Requests", c.bold(sum.requests.toLocaleString())],
         ["Window", `${tokens(window)}  ${c.dim(`· ${tokens(fixed.value)} of it system prompt and tools, ${fixed.measured ? "from your logged requests" : "assumed"}`)}`],
@@ -176,15 +191,15 @@ export const replay: Command = {
       [
         [
           "History kept",
-          `eunoe ${c.bold(c.green("every turn"))}, folded or whole  ${c.dim("·")}  Claude Code compacted ${c.bold(String(sum.nativeCompactions))} time${sum.nativeCompactions === 1 ? "" : "s"}, ${c.bold(tokens(sum.discarded))} tokens of conversation replaced by summaries`,
+          `eunoe ${c.bold(c.green("every turn"))}, folded or whole  ${c.dim("·")}  Claude Code compacted ${c.bold(sum.nativeCompactions.toLocaleString())} time${sum.nativeCompactions === 1 ? "" : "s"}, ${c.bold(tokens(sum.discarded))} tokens of conversation replaced by summaries`,
         ],
         [
           "Input tokens",
           `plain ${tokens(sum.plainTokens)}  ${c.dim("→")}  eunoe ${c.bold(tokens(sum.eunoeTokens))} tokens   ${c.green(c.bold(`${fewer(sum.plainTokens, sum.eunoeTokens)} fewer`))}  ${c.dim("the conversation; system prompt and tools are the same on both sides")}`,
         ],
         ["Cost", `${c.green(c.bold(`${fewer(sum.plainCost, sum.eunoeCost)} cheaper`))}  ${c.dim("cache reads at 0.1×, writes at 1.25×")}`],
-        ["Folds", c.bold(String(sum.folds))],
-        ["Folds dropped", `${c.bold(String(sum.dropped))} ${c.dim("folded turns removed entirely to fit the window")}`],
+        ["Folds", c.bold(sum.folds.toLocaleString())],
+        ["Folds dropped", `${c.bold(sum.dropped.toLocaleString())} ${c.dim("folded turns removed entirely to fit the window")}`],
         ["Peak context", `plain ${tokens(sum.peakPlain)}  ${c.dim("→")}  eunoe ${c.bold(tokens(sum.peakEunoe))}`],
       ],
       4,

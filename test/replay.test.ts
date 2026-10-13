@@ -88,9 +88,9 @@ function claudeHome(settings: Record<string, unknown> = {}) {
   return { home, project }
 }
 
-function writeSession(project: string, id: string, messages: Message[], lastActive: Date) {
+function writeSession(project: string, id: string, messages: Message[], lastActive: Date, started = lastActive) {
   const file = path.join(project, `${id}.jsonl`)
-  writeFileSync(file, `${messages.map((message) => JSON.stringify({ type: message.role, cwd: "/repo", message })).join("\n")}\n`)
+  writeFileSync(file, `${messages.map((message) => JSON.stringify({ type: message.role, cwd: "/repo", timestamp: started.toISOString(), message })).join("\n")}\n`)
   utimesSync(file, lastActive, lastActive)
 }
 
@@ -122,9 +122,9 @@ describe("eunoe replay", () => {
     expect(runs[0]).toMatch(new RegExp(`Requests\\s+${requests.toLocaleString()}\\b`))
   })
 
-  test("the history line shows the span still on disk and how long Claude Code keeps sessions", () => {
+  test("the history line runs from the oldest session's start to the latest activity, and says how long Claude Code keeps sessions", () => {
     const { home, project } = claudeHome({ cleanupPeriodDays: 14 })
-    writeSession(project, first, session(5, 100), new Date("2026-09-14T12:00:00Z"))
+    writeSession(project, first, session(5, 100), new Date("2026-09-20T12:00:00Z"), new Date("2026-09-14T12:00:00Z"))
     writeSession(project, second, session(5, 100), new Date("2026-10-13T12:00:00Z"))
     const out = runCli(home, "replay")
     expect(out).toMatch(/History\s+Sep 14, 2026 – Oct 13, 2026/)
