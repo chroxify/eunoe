@@ -29,7 +29,7 @@ function summary(title: string, sum: Totals) {
   line(`  ${title}`)
   rows(
     [
-      ["Requests", `${c.bold(String(sum.requests))}${folds}`],
+      ["Requests", `${c.bold(sum.requests.toLocaleString())}${folds}`],
       ["Cache", `${c.bold(tokens(sum.cacheRead))} read  ${c.dim("·")}  ${tokens(sum.cacheWrite)} written  ${c.dim("·")}  ${tokens(sum.uncached)} uncached${hitRate}`],
       ["Saved", saved],
     ],

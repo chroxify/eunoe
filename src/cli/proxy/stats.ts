@@ -31,6 +31,11 @@ function scaled(record: RequestRecord, chars: number | undefined): number | null
   return input > 0 && charsOut > 0 && chars && chars > 0 ? Math.round((input * chars) / charsOut) : null
 }
 
+export function savedTokens(record: RequestRecord): number | null {
+  const plain = scaled(record, record.charsIn)
+  return plain === null ? null : plain - inputOf(record)
+}
+
 export function withinWindow(records: RequestRecord[], now = Date.now(), window = 24 * 3_600_000): RequestRecord[] {
   return records.filter((record) => now - Date.parse(record.ts) <= window)
 }
@@ -66,10 +71,10 @@ export function totals(records: RequestRecord[]): Totals {
       out.folds += 1
       out.lastFold = record.ts
     }
-    const plain = scaled(record, record.charsIn)
-    if (plain !== null) {
+    const saved = savedTokens(record)
+    if (saved !== null) {
       out.sent += inputOf(record)
-      out.saved += plain - inputOf(record)
+      out.saved += saved
     }
   }
   return out

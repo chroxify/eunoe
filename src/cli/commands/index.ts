@@ -7,6 +7,7 @@ import { serve } from "./serve"
 import { sessions } from "./sessions"
 import { settings } from "./settings"
 import { start } from "./start"
+import { stats } from "./stats"
 import { status } from "./status"
 import { stop } from "./stop"
 import { uninstall } from "./uninstall"
@@ -20,6 +21,7 @@ export const commands: Record<string, Command> = {
   mode,
   settings,
   status,
+  stats,
   replay,
   sessions,
   peek,

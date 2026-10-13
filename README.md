@@ -336,6 +336,7 @@ eunoe settings               # pick a setting and change it
 eunoe settings list          # show them all
 eunoe settings set keep 5    # change one directly
 eunoe status                 # what's running, every session, context and tokens saved
+eunoe stats                  # tokens and API cost by day (--days 14, --weekly), and what eunoe saved
 eunoe replay                 # replay your whole Claude Code history through eunoe, offline, and see what it saves
 eunoe uninstall              # stop and remove the background proxy
 ```
@@ -415,6 +416,18 @@ off, run `eunoe settings set rerank off`.
 Every request is written to `~/.eunoe/requests.jsonl` with what eunoe did
 to it and how much of it the API served from cache, which is also where
 `eunoe status` gets its numbers.
+
+`eunoe stats` reads the usage the API returned, from Claude Code's own session
+files, subagents included, so it covers every session, routed through eunoe or
+not. Claude Code writes one response as several lines, so each response is
+counted once, with its final output count. Cost is at API list prices.
+Its eunoe columns are only what eunoe actually did, from its request log: the
+input tokens it kept out, and what that saved. Those tokens are mostly history
+plain Claude Code would have read from cache, so they are priced as cache
+reads, and every token a fold rewrote is charged back at the cache-write price.
+`eunoe replay` and `eunoe stats` can only see what is still on disk: Claude Code
+deletes sessions that have been idle for 30 days unless `cleanupPeriodDays` in
+its `settings.json` says otherwise.
 
 ## What it doesn't do
 
