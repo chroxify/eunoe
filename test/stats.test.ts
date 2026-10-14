@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { buckets, costSaved, matchLogged, savings, summarize } from "../src/cli/commands/stats"
+import { nativeCompactions, threadPeaks } from "../src/cli/proxy/stats"
 import { costOf, readUsage, usageFiles } from "../src/cli/usage"
 
 const at = (iso: string) => new Date(iso).getTime()
@@ -179,5 +180,41 @@ describe("cost saved", () => {
     const sum = savings([record, unsized, unmatched, { ts: record.ts }], matchLogged([entry], [record, unsized, unmatched]))
     expect(sum).toMatchObject({ handled: 3, priced: 1, unsized: 1, unmatched: 1 })
     expect(sum.actual).toBeCloseTo(costOf(entry) ?? 0, 9)
+  })
+})
+
+describe("compactions avoided", () => {
+  const record = (thread: string, plain: number, minute: number) => ({ ts: `2026-10-12T10:${String(minute).padStart(2, "0")}:00Z`, thread, window: 1_000_000, input: 100_000, charsOut: 100_000, charsIn: plain, charsFixed: 20_000 })
+
+  test("each conversation counts once per window filled, starting again from a summary", () => {
+    const records = [record("a", 500_000, 0), record("a", 930_000, 1), record("a", 950_000, 2), record("a", 1_900_000, 3), record("b", 400_000, 4)]
+    const avoided = nativeCompactions(records)
+    expect([...avoided].map((r) => r.ts)).toEqual([records[1].ts, records[3].ts])
+  })
+
+  test("requests without a window or size are never counted", () => {
+    expect(nativeCompactions([{ ts: "2026-10-12T10:00:00Z", thread: "a", input: 100, charsOut: 100, charsIn: 10_000_000 }]).size).toBe(0)
+  })
+})
+
+describe("longest conversations", () => {
+  const record = (thread: string, plain: number, minute: number) => ({
+    ts: `2026-10-12T10:${String(minute).padStart(2, "0")}:00Z`,
+    thread,
+    window: 1_000_000,
+    input: 100_000,
+    charsOut: 100_000,
+    charsIn: plain,
+    charsFixed: 20_000,
+    turns: minute,
+  })
+
+  test("each conversation's peak is its full history, with the compactions it would have needed", () => {
+    const records = [record("a", 500_000, 0), record("a", 1_900_000, 1), record("b", 400_000, 2)]
+    const peaks = threadPeaks(records, nativeCompactions(records))
+    expect(peaks.map((p) => [p.thread, p.plain, p.sent, p.compactions])).toEqual([
+      ["a", 1_900_000, 100_000, 1],
+      ["b", 400_000, 100_000, 0],
+    ])
   })
 })

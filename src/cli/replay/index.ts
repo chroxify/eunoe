@@ -43,7 +43,7 @@ export interface ReplayFailure {
 
 export const REPLAY_NATIVE_COMPACT_AT = 0.92
 
-const NATIVE_SUMMARY_CHARS = 30_000
+export const NATIVE_SUMMARY_CHARS = 30_000
 const CACHE_READ_WEIGHT = 0.1
 const CACHE_WRITE_WEIGHT = 1.25
 
@@ -85,7 +85,7 @@ export function replaySession(messages: Message[], { config, window, fixedTokens
 
   const state: ThreadState = {}
   const eunoe = { sent: [] as Message[], sum: 0, count: 0, upTo: 0, recall: 0, compactedTurn: -2, previous: 0 }
-  const plain = { sum: 0, count: 0, since: 0, previous: 0 }
+  const plain = { sum: 0, count: 0, since: 0, previous: 0, whole: 0, wholeCount: 0 }
 
   const sendEunoe = (i: number) => {
     const turn = turnAt[i - 1]
@@ -119,10 +119,12 @@ export function replaySession(messages: Message[], { config, window, fixedTokens
     for (; plain.since < i; plain.since += 1) {
       plain.sum += sizes[plain.since]
       plain.count += 1
+      plain.whole += sizes[plain.since]
+      plain.wholeCount += 1
     }
+    out.peakPlain = Math.max(out.peakPlain, tokens(fixedChars + listChars(plain.whole, plain.wholeCount)))
     let chars = fixedChars + listChars(plain.sum, plain.count)
     let cacheable = plain.previous
-    out.peakPlain = Math.max(out.peakPlain, tokens(chars))
     if (tokens(chars) > REPLAY_NATIVE_COMPACT_AT * window) {
       out.nativeCompactions += 1
       out.discarded += tokens(chars - fixedChars)

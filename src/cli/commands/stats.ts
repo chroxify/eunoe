@@ -2,7 +2,9 @@ import { claudeConfigDirs, readConfig } from "../../config"
 import type { Command } from "../command"
 import { cleanupDays } from "../proxy/claude-settings"
 import { type RequestRecord, recentRequests } from "../proxy/inspect"
-import { savedTokens, totals } from "../proxy/stats"
+import { nativeCompactions, savedTokens, type ThreadPeak, threadPeaks, totals } from "../proxy/stats"
+import { REPLAY_NATIVE_COMPACT_AT } from "../replay"
+import { shortId } from "../sessions"
 import { c, fail, line, percent, plural, table, tokens, wrap } from "../terminal/ui"
 import { costOf, ratesOf, readUsage, type UsageEntry, usageFiles } from "../usage"
 
@@ -20,6 +22,7 @@ const MATCH_WITHIN = 10 * 60_000
 const NOTE_WIDTH = 110
 const DEFAULT_DAYS = 7
 const DEFAULT_WEEKS = 8
+const LONGEST = 5
 
 const midnight = (ms: number) => new Date(new Date(ms).toDateString()).getTime()
 const addDays = (ms: number, days: number) => {
@@ -123,7 +126,13 @@ function notSentCell(logged: RequestRecord[]) {
   const sum = totals(logged)
   if (sum.requests === 0) return c.dim("–")
   if (sum.saved <= 0) return c.dim("±0")
-  return `${tokens(sum.saved)} ${c.dim(plural(sum.folds, "fold"))}`
+  return `${c.green(c.bold(tokens(sum.saved)))} ${c.dim(plural(sum.folds, "fold"))}`
+}
+
+function avoidedCell(logged: RequestRecord[], avoided: Set<RequestRecord>) {
+  if (!logged.some((record) => record.input)) return c.dim("–")
+  const count = logged.filter((record) => avoided.has(record)).length
+  return count > 0 ? c.green(c.bold(count.toLocaleString())) : c.dim("0")
 }
 
 function costSavedCell(logged: RequestRecord[], matched: Matched) {
@@ -131,13 +140,13 @@ function costSavedCell(logged: RequestRecord[], matched: Matched) {
   if (sum.priced === 0) return c.dim("–")
   if (Math.abs(sum.saved) < 0.005) return c.dim("±0")
   const share = c.dim(percent(sum.saved / (sum.actual + sum.saved)))
-  return sum.saved > 0 ? `${c.green(c.bold(dollars(sum.saved)))} ${share}` : `${c.yellow(`−${dollars(-sum.saved)}`)} ${share}`
+  return sum.saved > 0 ? `${dollars(sum.saved)} ${share}` : `${c.yellow(`−${dollars(-sum.saved)}`)} ${share}`
 }
 
-function row(label: string, usage: UsageEntry[], logged: RequestRecord[], matched: Matched, bold = false) {
+function row(label: string, usage: UsageEntry[], logged: RequestRecord[], matched: Matched, avoided: Set<RequestRecord>, bold = false) {
   const sum = summarize(usage)
   const strong = (text: string) => (bold ? c.bold(text) : text)
-  const eunoe = [notSentCell(logged), costSavedCell(logged, matched)]
+  const eunoe = [avoidedCell(logged, avoided), notSentCell(logged), costSavedCell(logged, matched)]
   if (sum.requests === 0) return [strong(label), c.dim("–"), "", "", "", "", "", ...eunoe]
   return [strong(label), strong(sum.requests.toLocaleString()), tokens(sum.input), tokens(sum.output), tokens(sum.cacheWrite), tokens(sum.cacheRead), strong(`${dollars(sum.cost)}${sum.unpriced ? c.dim("*") : ""}`), ...eunoe]
 }
@@ -161,6 +170,15 @@ function byModel(usage: UsageEntry[]) {
     ])
 }
 
+function longestRow(peak: ThreadPeak) {
+  return [
+    c.cyan(shortId(peak.session)),
+    `${c.green(c.bold(tokens(peak.plain)))} ${c.dim("of history")}`,
+    peak.compactions > 0 ? `${c.bold(plural(peak.compactions, "compaction"))} avoided` : c.dim("no compaction needed"),
+    c.dim(`eunoe sent ${tokens(peak.sent)}${peak.turns ? ` · ${plural(peak.turns, "turn")}` : ""} · ${dayLabel(Date.parse(peak.lastSeen))}`),
+  ]
+}
+
 const countArg = (args: string[], flag: string, fallback: number) => {
   const at = args.indexOf(flag)
   if (at === -1) return fallback
@@ -175,9 +193,10 @@ export const stats: Command = {
   details: [
     "Reads the usage the API returned for every request in your Claude Code",
     "sessions, subagents included, counting each response once. Cost is at",
-    "API list prices. The eunoe columns come from its request log: the input",
-    "tokens it kept out of the requests it handled, and what that saved at",
-    "cache-read prices once the cache writes its folds caused are paid for.",
+    "API list prices. The eunoe columns come from its request log: the",
+    "compactions Claude Code would have run on the conversations it handled,",
+    "the input tokens it kept out, and what that saved at cache-read prices",
+    "once the cache writes its folds caused are paid for.",
   ],
   options: [
     ["--days <n>", `Days to show (default ${DEFAULT_DAYS})`],
@@ -192,7 +211,9 @@ export const stats: Command = {
     const since = list[0].start
     const configDirs = claudeConfigDirs(readConfig())
     const usage = readUsage(usageFiles(configDirs, since), since)
-    const logged = recentRequests(Number.POSITIVE_INFINITY).filter((record) => Date.parse(record.ts) >= since)
+    const all = recentRequests(Number.POSITIVE_INFINITY)
+    const avoided = nativeCompactions(all)
+    const logged = all.filter((record) => Date.parse(record.ts) >= since)
     for (const entry of usage) place(list, entry.at, (bucket) => bucket.usage.push(entry))
     const matched = matchLogged(usage, logged)
     for (const record of logged) place(list, Date.parse(record.ts), (bucket) => bucket.logged.push(record))
@@ -201,10 +222,19 @@ export const stats: Command = {
     line(`  ${c.bold("eunoe stats")}  ${c.dim(`the last ${count} ${weekly ? "weeks" : "days"} of Claude Code, from your session files`)}`)
     line()
     table([
-      [weekly ? "Week" : "Day", "Requests", "Input", "Output", "Cache write", "Cache read", "API cost", "Not sent by eunoe", "Cost saved"].map((title) => c.dim(title)),
-      ...list.map((bucket) => row(bucket.label, bucket.usage, bucket.logged, matched)),
-      row("Total", usage, logged, matched, true),
+      [weekly ? "Week" : "Day", "Requests", "Input", "Output", "Cache write", "Cache read", "API cost", "Compactions avoided", "Tokens saved", "Cost saved"].map((title) => c.dim(title)),
+      ...list.map((bucket) => row(bucket.label, bucket.usage, bucket.logged, matched, avoided)),
+      row("Total", usage, logged, matched, avoided, true),
     ])
+
+    const longest = threadPeaks(all, avoided)
+      .filter((peak) => Date.parse(peak.lastSeen) >= since)
+      .slice(0, LONGEST)
+    if (longest.length > 0) {
+      line()
+      line(`  ${c.dim("Longest conversations, by the history Claude Code would have had to carry")}`)
+      table(longest.map(longestRow))
+    }
 
     const models = byModel(usage)
     if (models.length > 0) {
@@ -216,7 +246,8 @@ export const stats: Command = {
     const handled = savings(logged, matched)
     const notes: Array<[label: string, text: string]> = [
       ["API cost", "At list prices, including cache writes and fast mode."],
-      ["Not sent", "Input eunoe kept out, mostly history Claude Code would have read from cache."],
+      ["Compactions", `Times Claude Code would have compacted a conversation eunoe handled, at ${Math.round(REPLAY_NATIVE_COMPACT_AT * 100)}% of its window. eunoe kept every turn instead.`],
+      ["Tokens saved", "Input eunoe kept out, mostly history Claude Code would have read from cache."],
       ["Cost saved", "Those tokens at cache-read prices, minus what each fold cost to rewrite."],
       ...(handled.priced < handled.handled ? [["Not priced", `${(handled.handled - handled.priced).toLocaleString()} of ${handled.handled.toLocaleString()} eunoe requests: ${leftOut(handled)}.`] as [string, string]] : []),
       ...(summarize(usage).unpriced ? [["* No price", "Some models have no known price, so their tokens count but their cost doesn't."] as [string, string]] : []),

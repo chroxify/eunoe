@@ -78,6 +78,15 @@ describe("replay", () => {
     expect(out.nativeCompactions).toBeGreaterThan(0)
     expect(out.peakPlain).toBeGreaterThan(REPLAY_NATIVE_COMPACT_AT * window)
   })
+
+  test("the plain peak is the whole conversation, past every compaction", () => {
+    const window = 20_000
+    const out = replaySession(session(30, 30_000), { config: config(), window, fixedTokens })
+    const uncompacted = replaySession(session(30, 30_000), { config: config(), window: 10_000_000, fixedTokens })
+    expect(out.nativeCompactions).toBeGreaterThan(1)
+    expect(out.peakPlain).toBe(uncompacted.peakPlain)
+    expect(out.peakPlain).toBeGreaterThan(2 * REPLAY_NATIVE_COMPACT_AT * window)
+  })
 })
 
 function claudeHome(settings: Record<string, unknown> = {}) {

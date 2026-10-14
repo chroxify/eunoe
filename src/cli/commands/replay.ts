@@ -200,24 +200,24 @@ export const replay: Command = {
         ["Cost", `${c.green(c.bold(`${fewer(sum.plainCost, sum.eunoeCost)} cheaper`))}  ${c.dim("cache reads at 0.1×, writes at 1.25×")}`],
         ["Folds", c.bold(sum.folds.toLocaleString())],
         ["Folds dropped", `${c.bold(sum.dropped.toLocaleString())} ${c.dim("folded turns removed entirely to fit the window")}`],
-        ["Peak context", `plain ${tokens(sum.peakPlain)}  ${c.dim("→")}  eunoe ${c.bold(tokens(sum.peakEunoe))}`],
+        ["Peak context", `plain ${c.green(c.bold(tokens(sum.peakPlain)))}  ${c.dim("→")}  eunoe ${c.bold(tokens(sum.peakEunoe))}  ${c.dim("· the longest conversation whole, every compaction undone, against the most eunoe sent")}`],
       ],
       4,
     )
     const saved = [...compared]
       .filter((r) => r.nativeCompactions > 0)
-      .sort((a, b) => b.discarded - a.discarded)
+      .sort((a, b) => b.peakPlain - a.peakPlain)
       .slice(0, TOP_SESSIONS)
     if (saved.length > 0) {
       line()
-      line(`  ${c.dim("Sessions Claude Code would have compacted, by history it would have lost")}`)
+      line(`  ${c.dim("Longest sessions Claude Code would have compacted, by their whole history")}`)
       table(
         saved.map((r) => [
           c.cyan(shortId(r.id)),
           (r.title ?? (r.cwd ? tilde(r.cwd) : "")).slice(0, 40),
-          c.bold(c.green(`${plural(r.nativeCompactions, "compaction")} avoided`)),
-          `${tokens(r.discarded)} tokens kept`,
-          c.dim(`${plural(r.folds, "fold")} · ${tokens(r.plainTokens)} → ${tokens(r.eunoeTokens)} tokens`),
+          `${c.green(c.bold(tokens(r.peakPlain)))} ${c.dim("of history")}`,
+          c.bold(`${plural(r.nativeCompactions, "compaction")} avoided`),
+          c.dim(`eunoe peak ${tokens(r.peakEunoe)} · ${plural(r.folds, "fold")}`),
         ]),
       )
     }
