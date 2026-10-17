@@ -21,6 +21,12 @@ beforeAll(() => {
       received.push({ path: url.pathname, body: await request.text(), headers: request.headers })
       if (url.pathname.startsWith("/v1/models/")) return Response.json({ id: url.pathname.split("/").pop(), max_input_tokens: 60_000 })
       if (url.pathname === "/v1/fail") return new Response('{"error":"nope"}', { status: 400 })
+      if (url.pathname === "/v1/messages/count_tokens") {
+        const stalls = Number(request.headers.get("x-test-stalls") ?? 0)
+        const tries = received.filter((r) => r.path === url.pathname && r.headers.get("x-test-run") === request.headers.get("x-test-run")).length
+        if (tries <= stalls) await Bun.sleep(2_000)
+        return Response.json({ input_tokens: 42 })
+      }
       if (request.headers.get("x-test-dense")) {
         const body = received.at(-1)!.body
         if (body.length > 60_000) return new Response(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: `prompt is too long: ${body.length} tokens > 60000 maximum` } }), { status: 400 })
@@ -201,6 +207,39 @@ describe("canonical context", () => {
     } finally {
       writeFileSync(paths.config, previous)
     }
+  })
+})
+
+describe("token counts", () => {
+  const count = (run: string, stalls: number) =>
+    handle(
+      new Request("http://127.0.0.1/v1/messages/count_tokens", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: "Bearer test", "x-claude-code-session-id": freshSession(), "x-test-run": run, "x-test-stalls": String(stalls) },
+        body: JSON.stringify({ model: "claude-test", messages: session(1) }),
+      }),
+      { countTokensTimeoutMs: 100 },
+    )
+
+  test("a count that hangs upstream is sent again instead of holding Claude Code's tool call", async () => {
+    const run = crypto.randomUUID()
+    const started = Date.now()
+    const response = await count(run, 2)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ input_tokens: 42 })
+    expect(Date.now() - started).toBeLessThan(1_500)
+    expect(received.filter((r) => r.headers.get("x-test-run") === run)).toHaveLength(3)
+    await Bun.sleep(20)
+    const entry = logged().findLast((r) => r.path === "/v1/messages/count_tokens")
+    expect(entry).toMatchObject({ status: 200, stalled: 2 })
+    expect(entry.ms).toBeGreaterThanOrEqual(200)
+  })
+
+  test("a count that keeps hanging becomes a 502 Claude Code can retry", async () => {
+    const run = crypto.randomUUID()
+    const response = await count(run, 3)
+    expect(response.status).toBe(502)
+    expect(received.filter((r) => r.headers.get("x-test-run") === run)).toHaveLength(3)
   })
 })
 

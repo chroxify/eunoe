@@ -93,16 +93,25 @@ function saveRatio(threadKey: string, ratio: (previous: number | undefined) => n
   saveState(threadKey, state)
 }
 
-export async function handle(request: Request): Promise<Response> {
+interface Timing {
+  countTokensTimeoutMs: number
+}
+
+const COUNT_TOKENS_ATTEMPTS = 3
+
+export async function handle(request: Request, timing: Timing = { countTokensTimeoutMs: 20_000 }): Promise<Response> {
+  const began = Date.now()
   try {
-    return await route(request)
+    return await route(request, began, timing)
   } catch (error) {
-    logRequest({ path: new URL(request.url).pathname, status: 502, action: "upstream-unreachable", error: clipped(String(error)) })
+    logRequest({ path: new URL(request.url).pathname, status: 502, action: "upstream-unreachable", error: clipped(String(error)), ms: Date.now() - began })
     return Response.json({ type: "error", error: { type: "api_error", message: `eunoe could not reach the API: ${String(error)}` } }, { status: 502 })
   }
 }
 
-async function route(request: Request): Promise<Response> {
+async function route(request: Request, began: number, timing: Timing): Promise<Response> {
+  let stalled = 0
+  const log = (record: Record<string, unknown>) => logRequest({ ...record, ms: Date.now() - began, ...(stalled > 0 && { stalled }) })
   const config = readConfig()
   const url = new URL(request.url)
   if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid, startedAt } satisfies Health)
@@ -136,7 +145,19 @@ async function route(request: Request): Promise<Response> {
       return { ...passthrough, note: { action: "error-passthrough", error: String(error) } }
     }
   }
-  const send = (body: string | undefined) => fetch(config.upstream + url.pathname + url.search, { method: request.method, headers, body })
+  const target = config.upstream + url.pathname + url.search
+  const send = async (body: string | undefined): Promise<Response> => {
+    if (!isCountTokens) return fetch(target, { method: request.method, headers, body })
+    for (;;) {
+      try {
+        return await fetch(target, { method: request.method, headers, body, signal: AbortSignal.timeout(timing.countTokensTimeoutMs) })
+      } catch (error) {
+        const timedOut = error instanceof Error && error.name === "TimeoutError"
+        if (!timedOut || stalled + 1 >= COUNT_TOKENS_ATTEMPTS) throw error
+        stalled += 1
+      }
+    }
+  }
 
   let out = await build()
   let upstream = await send(out.bodyText)
@@ -147,18 +168,18 @@ async function route(request: Request): Promise<Response> {
     const overflow = overflowTokens(errorText)
     const logged = { path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note }
     if (!overflow || !out.threadKey || out.sentSize === 0 || isCountTokens) {
-      logRequest({ ...logged, error: clipped(errorText) })
+      log({ ...logged, error: clipped(errorText) })
       return errorResponse(errorText)
     }
     const sentSize = out.sentSize
     saveRatio(out.threadKey, (previous) => Math.max(previous ?? 0, overflow / sentSize) * 1.1)
-    logRequest({ ...logged, overflow, error: clipped(errorText) })
+    log({ ...logged, overflow, error: clipped(errorText) })
     out = await build()
     out = { ...out, note: { ...out.note, healed: overflow } }
     upstream = await send(out.bodyText)
     if (upstream.status >= 400) {
       const retryError = await upstream.text()
-      logRequest({ path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note, error: clipped(retryError) })
+      log({ path: url.pathname, status: upstream.status, thread: out.threadKey, ...out.note, error: clipped(retryError) })
       return errorResponse(retryError)
     }
   }
@@ -166,13 +187,13 @@ async function route(request: Request): Promise<Response> {
   const { note, threadKey, sentSize, givenSize, fixedSize, sent } = out
   const response = new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
   if (note.action === "pass" || !isMessages || isCountTokens) {
-    if (note.action !== "pass" || sent) logRequest({ path: url.pathname, status: upstream.status, ...note, ...(sent && { context: sent }) })
+    if (note.action !== "pass" || sent) log({ path: url.pathname, status: upstream.status, ...note, ...(sent && { context: sent }) })
     return response
   }
 
   return watchUsage(response, (usage) => {
     const input = inputTokens(usage)
-    logRequest({
+    log({
       path: url.pathname,
       status: upstream.status,
       thread: threadKey,
@@ -191,5 +212,5 @@ async function route(request: Request): Promise<Response> {
 }
 
 export function serve(port: number) {
-  return Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: 255, fetch: handle })
+  return Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: 255, fetch: (request) => handle(request) })
 }
