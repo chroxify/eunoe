@@ -8,7 +8,7 @@ import { searchGuide } from "../src/context/prompts"
 import { recallFor } from "../src/context/recall"
 import { handle } from "../src/proxy/server"
 import { renderTranscript } from "../src/transcript/render"
-import { prepareTranscript } from "../src/transcript/search"
+import { flushTranscripts, prepareTranscript } from "../src/transcript/search"
 import { parentTurnOf, subagentChunks, subagentMessages, subagentRuns, subagentsDir } from "../src/transcript/subagents"
 import { freshSession } from "./fixtures"
 
@@ -302,8 +302,9 @@ describe("end to end through the proxy", () => {
     expect(JSON.stringify(sent.messages.at(-1))).not.toContain(TOKEN)
   })
 
-  test("the managed transcript the agent is pointed at has the subagent record", () => {
+  test("the managed transcript the agent is pointed at has the subagent record", async () => {
     const ref = prepareTranscript("markdown", folderFile, "folder-session-aaaaaaaa")
+    await flushTranscripts()
     expect(existsSync(path.join(ref.dir, "turn-0001-subagent-1.md"))).toBe(true)
     expect(readFileSync(path.join(ref.dir, "turn-0001-subagent-1.md"), "utf8")).toContain(TOKEN)
     expect(readFileSync(path.join(ref.dir, "index.md"), "utf8")).toContain("turn-0001-subagent-1.md")

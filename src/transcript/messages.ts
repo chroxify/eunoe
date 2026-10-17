@@ -1,18 +1,21 @@
-import { readFileSync, statSync } from "node:fs"
 import type { Message } from "../context/content"
-import { entryMessages, parseJsonl } from "./parse"
+import { readSessionEntries } from "./entries"
+import { entryMessages, type SessionEntry } from "./parse"
 
-let cached: { file: string; mtimeMs: number; messages: Message[] } | null = null
+const KEPT_SESSIONS = 32
+
+const cached = new Map<string, { entries: SessionEntry[]; messages: Message[] }>()
 
 export function sessionMessages(file: string): Message[] {
-  let mtimeMs: number
-  try {
-    mtimeMs = statSync(file).mtimeMs
-  } catch {
-    return []
+  const entries = readSessionEntries(file)
+  const known = cached.get(file)
+  cached.delete(file)
+  if (known?.entries === entries) {
+    cached.set(file, known)
+    return known.messages
   }
-  if (cached?.file === file && cached.mtimeMs === mtimeMs) return cached.messages
-  const messages = entryMessages(parseJsonl(readFileSync(file, "utf8")).filter((entry) => !entry.isSidechain))
-  cached = { file, mtimeMs, messages }
+  const messages = entryMessages(entries.filter((entry) => !entry.isSidechain))
+  cached.set(file, { entries, messages })
+  if (cached.size > KEPT_SESSIONS) cached.delete(cached.keys().next().value as string)
   return messages
 }

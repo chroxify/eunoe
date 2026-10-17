@@ -3,9 +3,10 @@ import path from "node:path"
 import { blocks, clip, contentBlocks, type Message } from "../context/content"
 import { splitTurns } from "../context/fold/turns"
 import { type RecallChunk, recallChunks } from "../context/recall"
+import { readSessionEntries } from "./entries"
 import { listEntries } from "./locate"
 import { sessionMessages } from "./messages"
-import { entryMessages, parseJsonl, type SessionEntry } from "./parse"
+import { entryMessages, type SessionEntry } from "./parse"
 
 export interface SubagentRun {
   id: string
@@ -20,7 +21,7 @@ export interface SubagentRun {
 
 const INLINE_ID = "sidechain"
 
-const entryCache = new Map<string, { mtimeMs: number; entries: SessionEntry[] }>()
+const runCache = new Map<string, SubagentRun>()
 const chunkCache = new Map<string, { mtimeMs: number; parentTurn: number; chunks: RecallChunk[] }>()
 
 function mtimeOf(file: string): number | null {
@@ -29,16 +30,6 @@ function mtimeOf(file: string): number | null {
   } catch {
     return null
   }
-}
-
-function readEntries(file: string): SessionEntry[] {
-  const mtimeMs = mtimeOf(file)
-  if (mtimeMs === null) return []
-  const hit = entryCache.get(file)
-  if (hit?.mtimeMs === mtimeMs) return hit.entries
-  const entries = parseJsonl(readFileSync(file, "utf8"))
-  entryCache.set(file, { mtimeMs, entries })
-  return entries
 }
 
 function firstPrompt(entries: SessionEntry[]): string {
@@ -72,10 +63,13 @@ function fileRuns(sessionFile: string): SubagentRun[] {
     .filter((name) => name.startsWith("agent-") && name.endsWith(".jsonl"))
     .map((name) => {
       const file = path.join(dir, name)
-      const entries = readEntries(file)
+      const mtimeMs = mtimeOf(file) ?? 0
+      const known = runCache.get(file)
+      if (known?.mtimeMs === mtimeMs) return known
+      const entries = readSessionEntries(file)
       const meta = readMeta(file)
       const prompt = firstPrompt(entries)
-      return {
+      const run: SubagentRun = {
         id: name.slice("agent-".length, -".jsonl".length),
         file,
         inline: false,
@@ -83,17 +77,21 @@ function fileRuns(sessionFile: string): SubagentRun[] {
         toolUseId: meta.toolUseId ? String(meta.toolUseId) : null,
         prompt,
         started: String(entries[0]?.timestamp ?? ""),
-        mtimeMs: mtimeOf(file) ?? 0,
+        mtimeMs,
       }
+      runCache.set(file, run)
+      return run
     })
 }
 
 function inlineRuns(sessionFile: string, known: Set<string>): SubagentRun[] {
   const byAgent = new Map<string, SessionEntry[]>()
-  for (const entry of readEntries(sessionFile)) {
+  for (const entry of readSessionEntries(sessionFile)) {
     if (!entry.isSidechain) continue
     const id = entry.agentId ?? INLINE_ID
-    byAgent.set(id, [...(byAgent.get(id) ?? []), entry])
+    const group = byAgent.get(id)
+    if (group) group.push(entry)
+    else byAgent.set(id, [entry])
   }
   return [...byAgent]
     .filter(([id]) => !known.has(id))
@@ -110,7 +108,7 @@ export function subagentRuns(sessionFile: string): SubagentRun[] {
 }
 
 export function subagentEntries(run: SubagentRun): SessionEntry[] {
-  const entries = readEntries(run.file)
+  const entries = readSessionEntries(run.file)
   if (!run.inline) return entries
   return entries.filter((entry) => entry.isSidechain && (entry.agentId ?? INLINE_ID) === run.id)
 }

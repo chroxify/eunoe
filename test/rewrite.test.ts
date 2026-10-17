@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test"
+import { writeFileSync } from "node:fs"
+import path from "node:path"
+import { paths } from "../src/config/paths"
 import type { Body, Message } from "../src/context/content"
 import { splitTurns, turnFingerprint } from "../src/context/fold/turns"
 import { SYSTEM_PROMPT } from "../src/context/prompts"
 import { messageFingerprint } from "../src/proxy/fingerprint"
 import { rewrite, rewriteAsync } from "../src/proxy/rewrite"
-import { saveState } from "../src/proxy/state"
+import { readState, saveState } from "../src/proxy/state"
 import { call, config, freshSession, reply, result, session, transcript, turn, user } from "./fixtures"
 
 const TOOLS = [{ name: "Bash" }]
@@ -274,5 +277,25 @@ describe("turn cap", () => {
     expect(sent).toContain("done 1")
     expect(sent).toContain("done 3")
     expect(text(run(body(messages), { mode: "default", turnCap: "off" }, 10_000_000).body).match(/x{500000}/g)?.length).toBe(3)
+  })
+})
+
+describe("thread state", () => {
+  test("each read is its own copy, so a change nobody saves never leaks into the next read", () => {
+    const key = `state-${freshSession()}`
+    saveState(key, { cut: "abc", recalls: { a: "one" } })
+    const first = readState(key)
+    first.recalls = { a: "changed" }
+    delete first.cut
+    expect(readState(key)).toEqual({ cut: "abc", recalls: { a: "one" } })
+  })
+
+  test("an edit to the file from outside the proxy is read, not the remembered copy", async () => {
+    const key = `state-${freshSession()}`
+    saveState(key, { cut: "abc" })
+    expect(readState(key).cut).toBe("abc")
+    await Bun.sleep(5)
+    writeFileSync(path.join(paths.threads, `${key}.json`), JSON.stringify({ cut: "xyz", keep: 2 }))
+    expect(readState(key)).toEqual({ cut: "xyz", keep: 2 })
   })
 })

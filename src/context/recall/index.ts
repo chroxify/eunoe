@@ -79,29 +79,66 @@ export function recallChunks(messages: Message[], keptIds: Map<string, string>, 
   return chunks
 }
 
-export function rank(query: string[], chunks: RecallChunk[], minTerms = 2) {
-  const df = new Map<string, number>()
-  for (const chunk of chunks) for (const term of new Set(chunk.terms)) df.set(term, (df.get(term) ?? 0) + 1)
-  const average = chunks.reduce((s, c) => s + c.terms.length, 0) / Math.max(1, chunks.length)
-  const wanted = [...new Set(query)].filter((t) => df.has(t))
-  return chunks
-    .map((chunk, index) => {
-      const tf = new Map<string, number>()
-      for (const term of chunk.terms) tf.set(term, (tf.get(term) ?? 0) + 1)
-      let score = 0
-      let matched = 0
-      for (const term of wanted) {
-        const f = tf.get(term) ?? 0
-        if (!f) continue
-        matched += 1
-        const n = df.get(term) ?? 0
-        const idf = Math.log(1 + (chunks.length - n + 0.5) / (n + 0.5))
-        score += (idf * (f * (BM25_K1 + 1))) / (f + BM25_K1 * (1 - BM25_B + (BM25_B * chunk.terms.length) / average))
-      }
-      return { index, score, matched }
+interface RankedChunk {
+  index: number
+  score: number
+  matched: number
+}
+
+function rankAll(queries: string[][], chunks: RecallChunk[], minTerms = 2): RankedChunk[][] {
+  const ids = new Map<string, number>()
+  for (const query of queries) for (const term of query) if (!ids.has(term)) ids.set(term, ids.size)
+  const df = new Int32Array(ids.size)
+  const counts = new Int32Array(ids.size)
+  const touched: number[] = []
+  const hits: Array<{ index: number; found: Array<[number, number]> }> = []
+  let total = 0
+  chunks.forEach((chunk, index) => {
+    total += chunk.terms.length
+    touched.length = 0
+    for (const term of chunk.terms) {
+      const id = ids.get(term)
+      if (id === undefined) continue
+      if (counts[id] === 0) touched.push(id)
+      counts[id] += 1
+    }
+    if (touched.length === 0) return
+    const found = touched.map((id): [number, number] => {
+      const f = counts[id]
+      counts[id] = 0
+      df[id] += 1
+      return [id, f]
     })
-    .filter((r) => r.matched >= Math.min(minTerms, wanted.length) && r.score > 0)
-    .sort((a, b) => b.score - a.score)
+    hits.push({ index, found })
+  })
+  const average = total / Math.max(1, chunks.length)
+  return queries.map((query) => {
+    const asked = [...new Set(query)].map((term) => ids.get(term) ?? -1)
+    const position = new Int32Array(ids.size).fill(-1)
+    asked.forEach((id, i) => {
+      position[id] = i
+    })
+    const needed = Math.max(1, Math.min(minTerms, asked.filter((id) => df[id] > 0).length))
+    const scored: RankedChunk[] = []
+    for (const { index, found } of hits) {
+      const mine = found.filter(([id]) => position[id] >= 0)
+      if (mine.length < needed) continue
+      if (mine.length > 1) mine.sort((a, b) => position[a[0]] - position[b[0]])
+      const length = chunks[index].terms.length
+      let score = 0
+      for (const [id, f] of mine) {
+        const n = df[id]
+        const idf = Math.log(1 + (chunks.length - n + 0.5) / (n + 0.5))
+        score += (idf * (f * (BM25_K1 + 1))) / (f + BM25_K1 * (1 - BM25_B + (BM25_B * length) / average))
+      }
+      if (score > 0) scored.push({ index, score, matched: mine.length })
+    }
+    return scored.sort((a, b) => b.score - a.score)
+  })
+}
+
+export function rank(query: string[], chunks: RecallChunk[], minTerms = 2): RankedChunk[] {
+  return rankAll([query], chunks, minTerms)[0]
 }
 
 function excerpt(chunk: RecallChunk, query: Set<string>, salient: boolean): string[] {
@@ -136,27 +173,23 @@ function merged(hits: Array<{ query: string[]; indices: number[] }>): RecallPick
   return [...picked.entries()].map(([index, query]) => ({ index, query }))
 }
 
-const ranked = (query: string[], chunks: RecallChunk[], options: RecallOptions, width: number) =>
-  rank(query, chunks, options.minTerms)
-    .slice(0, width)
-    .map((hit) => hit.index)
+function rankedLines(prompt: string, chunks: RecallChunk[], options: RecallOptions, width: number) {
+  const lines = queriesOf(prompt)
+  const queries = lines.map(terms)
+  const results = rankAll(queries, chunks, options.minTerms)
+  return lines.map((line, i) => ({ line, query: queries[i], indices: results[i].slice(0, width).map((hit) => hit.index) }))
+}
 
 function pickRecall(prompt: string, chunks: RecallChunk[], options: RecallOptions): RecallPick[] {
-  return merged(
-    queriesOf(prompt).map((line) => {
-      const query = terms(line)
-      return { query, indices: ranked(query, chunks, options, options.perQuery ?? 12) }
-    }),
-  )
+  return merged(rankedLines(prompt, chunks, options, options.perQuery ?? 12))
 }
 
 export const identityReranker: Reranker = async (_query, _chunks, candidates) => candidates
 
 export async function pickRecallWith(prompt: string, chunks: RecallChunk[], rerank: Reranker, options: RecallOptions = {}): Promise<RecallPick[]> {
   const hits: Array<{ query: string[]; indices: number[] }> = []
-  for (const line of queriesOf(prompt)) {
-    const query = terms(line)
-    const reordered = await rerank(line, chunks, ranked(query, chunks, options, options.candidates ?? 30))
+  for (const { line, query, indices } of rankedLines(prompt, chunks, options, options.candidates ?? 30)) {
+    const reordered = await rerank(line, chunks, indices)
     hits.push({ query, indices: reordered.slice(0, options.perQuery ?? 12) })
   }
   return merged(hits)

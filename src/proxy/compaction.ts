@@ -1,7 +1,7 @@
 import type { Config } from "../config"
 import type { Body, Message } from "../context/content"
 import { type CompactOptions, capTurns, clearToolResults, compactMessages, countToolResults } from "../context/fold/strategies"
-import { splitTurns, turnFingerprint } from "../context/fold/turns"
+import { type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "../context/fold/turns"
 import { clearedOutput } from "../context/prompts"
 import { DEFAULT_RATIO, type Estimator, estimator, targetSize } from "./estimate"
 import { resetCut, type ThreadState } from "./state"
@@ -17,6 +17,24 @@ export interface CompactInput {
   omittedBefore?: number
   decorate?: (messages: Message[]) => Message[]
   reduce?: CompactOptions["reduce"]
+}
+
+const FOLDED_TURNS = 4096
+
+const folded = new Map<string, Message[]>()
+
+function reduceRemembered(turn: Message[], options: ReduceOptions): Message[] {
+  const key = `${options.evidence ? 1 : 0}:${Bun.hash(JSON.stringify(turn))}`
+  const known = folded.get(key)
+  if (known) {
+    folded.delete(key)
+    folded.set(key, known)
+    return known
+  }
+  const reduced = reduceTurn(turn, options)
+  folded.set(key, reduced)
+  if (folded.size > FOLDED_TURNS) folded.delete(folded.keys().next().value as string)
+  return reduced
 }
 
 export interface CompactResult {
@@ -89,7 +107,7 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
 
   const configuredKeep = config.keepTurns === "all" ? Number.MAX_SAFE_INTEGER : config.keepTurns
   const ratio = state.ratio ?? DEFAULT_RATIO
-  const options = { guide, omittedBefore, evidence: config.eval?.evidence ?? true, reduce, capChars: config.turnCap === "off" ? undefined : config.turnCap / ratio }
+  const options = { guide, omittedBefore, evidence: config.eval?.evidence ?? true, reduce: reduce ?? reduceRemembered, capChars: config.turnCap === "off" ? undefined : config.turnCap / ratio }
   const liveStart = (list: Message[]) =>
     list.length -
     splitTurns(list)

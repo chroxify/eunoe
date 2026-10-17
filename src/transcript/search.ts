@@ -32,13 +32,34 @@ function indexWithQmd(dir: string) {
   return next
 }
 
+const queued = new Map<string, { mode: SearchMode; sessionFile: string }>()
+let draining: Promise<void> | null = null
+
+function renderQueued() {
+  for (const [dir, { mode, sessionFile }] of queued) {
+    queued.delete(dir)
+    try {
+      const { changed } = renderTranscript(sessionFile, path.basename(dir), dir, mode === "xml" ? "xml" : "markdown")
+      if (mode === "qmd" && (changed || !isIndexed(dir))) void indexWithQmd(dir)
+    } catch {}
+  }
+}
+
+export function flushTranscripts(): Promise<void> {
+  return draining ?? Promise.resolve()
+}
+
 export function prepareTranscript(mode: SearchMode, sessionFile: string, key: string): TranscriptRef {
   const dir = transcriptDir(key)
   if (mode !== "jsonl") {
-    try {
-      const { changed } = renderTranscript(sessionFile, key, dir, mode === "xml" ? "xml" : "markdown")
-      if (mode === "qmd" && (changed || !isIndexed(dir))) void indexWithQmd(dir)
-    } catch {}
+    queued.set(dir, { mode, sessionFile })
+    draining ??= new Promise<void>((resolve) =>
+      setTimeout(() => {
+        renderQueued()
+        draining = null
+        resolve()
+      }, 0),
+    )
   }
   return { mode, jsonl: sessionFile, dir }
 }

@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { claudeConfigDirs, normalizeConfig } from "../src/config"
 import { searchGuide } from "../src/context/prompts"
+import { readSessionEntries } from "../src/transcript/entries"
 import { findSessionFile } from "../src/transcript/locate"
 import { renderTranscript } from "../src/transcript/render"
-import { prepareTranscript } from "../src/transcript/search"
+import { flushTranscripts, prepareTranscript } from "../src/transcript/search"
 
 function writeSession(dir: string, id: string) {
   const project = path.join(dir, "projects", "-tmp-project")
@@ -82,6 +83,15 @@ describe("rendering", () => {
     expect(searchGuide(ref)).toContain(ref.dir)
     expect(searchGuide({ ...ref, mode: "jsonl" })).toContain(sessionFile)
   })
+
+  test("the transcript renders after the request, not inside it, and once however often it was asked for", async () => {
+    const ref = prepareTranscript("markdown", sessionFile, "deferred-1")
+    prepareTranscript("markdown", sessionFile, "deferred-1")
+    expect(existsSync(path.join(ref.dir, "index.md"))).toBe(false)
+    await flushTranscripts()
+    expect(readFileSync(path.join(ref.dir, "index.md"), "utf8")).toContain("deploy to staging")
+    expect(renderTranscript(sessionFile, "deferred-1", ref.dir).changed).toBe(false)
+  })
 })
 
 describe("config", () => {
@@ -92,5 +102,44 @@ describe("config", () => {
     expect(config.keepTurns).toBe("all")
     expect(config.search).toBe("markdown")
     expect(config.claudeConfigDirs).toEqual([])
+  })
+})
+
+describe("reading a session file as it grows", () => {
+  const line = (n: number) => `${JSON.stringify({ type: "user", uuid: String(n), message: { role: "user", content: `message ${n}` } })}\n`
+  const uuids = (file: string) => readSessionEntries(file).map((entry) => (entry as { uuid?: string }).uuid)
+
+  test("appended lines are added to what was already read, and an unchanged file returns the same entries", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "eunoe-grow-")), "s.jsonl")
+    writeFileSync(file, line(1) + line(2))
+    const first = readSessionEntries(file)
+    expect(uuids(file)).toEqual(["1", "2"])
+    expect(readSessionEntries(file)).toBe(first)
+    appendFileSync(file, line(3))
+    expect(uuids(file)).toEqual(["1", "2", "3"])
+  })
+
+  test("a line still being written counts once it is whole, and never twice", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "eunoe-grow-")), "s.jsonl")
+    writeFileSync(file, line(1))
+    const half = line(2).slice(0, 10)
+    appendFileSync(file, half)
+    expect(uuids(file)).toEqual(["1"])
+    appendFileSync(file, line(2).slice(10))
+    expect(uuids(file)).toEqual(["1", "2"])
+    writeFileSync(file, `${line(1)}${line(2).trimEnd()}`)
+    expect(uuids(file)).toEqual(["1", "2"])
+    appendFileSync(file, `\n${line(3)}`)
+    expect(uuids(file)).toEqual(["1", "2", "3"])
+  })
+
+  test("a file rewritten in place is read again from the start", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "eunoe-grow-")), "s.jsonl")
+    writeFileSync(file, line(1) + line(2))
+    expect(uuids(file)).toEqual(["1", "2"])
+    writeFileSync(file, line(7))
+    expect(uuids(file)).toEqual(["7"])
+    writeFileSync(file, `x${line(8).slice(1)}${line(9)}${line(10)}`)
+    expect(uuids(file)).toEqual(["9", "10"])
   })
 })
