@@ -60,6 +60,31 @@ function appendable(file: string, known: Parsed | undefined, size: number): know
   return readRange(file, known.offset - known.seam.length, known.offset).equals(known.seam)
 }
 
+export function readSessionSlice(file: string, maxBytes: number): boolean {
+  let size: number
+  let mtimeMs: number
+  try {
+    ;({ size, mtimeMs } = statSync(file))
+  } catch {
+    return true
+  }
+  const known = parsed.get(file)
+  if (known && known.size === size && known.mtimeMs === mtimeMs) return true
+  const appended = appendable(file, known, size)
+  const from = appended ? known.offset : 0
+  const bytes = from + maxBytes < size ? readRange(file, from, from + maxBytes) : null
+  const complete = bytes ? bytes.lastIndexOf(NEWLINE) + 1 : 0
+  if (!bytes || complete === 0) {
+    readSessionEntries(file)
+    return true
+  }
+  const added = parseLines(bytes.subarray(0, complete).toString("utf8"))
+  const committed = appended ? known.committed.concat(added) : added
+  const offset = from + complete
+  remember(file, { size: offset, mtimeMs: 0, offset, seam: readRange(file, Math.max(0, offset - SEAM_BYTES), offset), committed, entries: committed })
+  return false
+}
+
 export function readSessionEntries(file: string): SessionEntry[] {
   let size: number
   let mtimeMs: number

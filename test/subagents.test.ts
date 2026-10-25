@@ -7,10 +7,12 @@ import { paths } from "../src/config/paths"
 import { searchGuide } from "../src/context/prompts"
 import { recallFor } from "../src/context/recall"
 import { handle } from "../src/proxy/server"
+import { recordSession } from "../src/proxy/sessions"
+import { warmRecentSessions } from "../src/proxy/warm"
 import { renderTranscript } from "../src/transcript/render"
 import { flushTranscripts, prepareTranscript } from "../src/transcript/search"
 import { parentTurnOf, subagentChunks, subagentMessages, subagentRuns, subagentsDir } from "../src/transcript/subagents"
-import { freshSession } from "./fixtures"
+import { config, freshSession } from "./fixtures"
 
 const TOKEN = "tok_zebra_7781"
 const PARENT_ONLY = "Current Version ID: 98330153"
@@ -313,5 +315,15 @@ describe("end to end through the proxy", () => {
   test("a fresh session with no transcript on disk still works and recalls nothing", async () => {
     const sent = await ask(freshSession(), "what deployment token was issued for the lease service?")
     expect(JSON.stringify(sent.messages.at(-1))).not.toContain(TOKEN)
+  })
+})
+
+describe("warm-up after a restart", () => {
+  test("recently seen sessions are read ahead, and recall over them is unchanged", async () => {
+    const question = "what deployment token was issued for the lease service"
+    const before = recallFor(question, subagentChunks(folderFile))
+    recordSession("folder-session-aaaaaaaa", "default", folderFile)
+    await warmRecentSessions(config({ claudeConfigDirs: [configDir] }))
+    expect(recallFor(question, subagentChunks(folderFile))).toBe(before)
   })
 })

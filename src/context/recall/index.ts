@@ -50,6 +50,50 @@ function windows(lines: string[], size: number): string[][] {
   return out
 }
 
+interface ChunkedText {
+  text: string
+  head: string
+  turn: number
+  chunks: RecallChunk[]
+}
+
+const CHUNK_CACHE_TERMS = 8_000_000
+
+const chunked = new Map<string, ChunkedText>()
+let chunkedTerms = 0
+
+const termCount = (chunks: RecallChunk[]) => chunks.reduce((sum, chunk) => sum + chunk.terms.length, 0)
+
+function forget(key: string) {
+  const known = chunked.get(key)
+  if (!known) return
+  chunked.delete(key)
+  chunkedTerms -= termCount(known.chunks)
+}
+
+function chunksOf(key: string | null, text: string, head: string, turn: number, build: () => RecallChunk[]): RecallChunk[] {
+  if (key === null) return build()
+  const known = chunked.get(key)
+  if (known && known.text === text && known.head === head) {
+    chunked.delete(key)
+    chunked.set(key, known)
+    if (known.turn !== turn) {
+      known.turn = turn
+      known.chunks = known.chunks.map((chunk) => ({ ...chunk, turn }))
+    }
+    return known.chunks
+  }
+  forget(key)
+  const chunks = build()
+  chunked.set(key, { text, head, turn, chunks })
+  chunkedTerms += termCount(chunks)
+  for (const oldest of chunked.keys()) {
+    if (chunkedTerms <= CHUNK_CACHE_TERMS || oldest === key) break
+    forget(oldest)
+  }
+  return chunks
+}
+
 export function recallChunks(messages: Message[], keptIds: Map<string, string>, options: RecallOptions = {}): RecallChunk[] {
   const size = options.windowLines ?? 6
   const weight = Math.max(1, options.callWeight ?? 1)
@@ -61,8 +105,12 @@ export function recallChunks(messages: Message[], keptIds: Map<string, string>, 
         const text = resultText(result)
         if (keptIds.get(call.id) === text || !text.trim()) continue
         const head = describeToolCall(call)
-        const headTerms = Array.from({ length: weight }, () => terms(head)).flat()
-        for (const window of windows(text.split("\n"), size)) chunks.push({ turn: turnIndex + 1, call: head, lines: window, terms: [...headTerms, ...terms(window.join("\n"))] })
+        const key = typeof call.id === "string" && call.id ? `${size}|${weight}|${call.id}` : null
+        const built = chunksOf(key, text, head, turnIndex + 1, () => {
+          const headTerms = Array.from({ length: weight }, () => terms(head)).flat()
+          return windows(text.split("\n"), size).map((window) => ({ turn: turnIndex + 1, call: head, lines: window, terms: [...headTerms, ...terms(window.join("\n"))] }))
+        })
+        for (const chunk of built) chunks.push(chunk)
       }
       if (!(options.narrative ?? true)) return
       const said = turn
@@ -74,7 +122,11 @@ export function recallChunks(messages: Message[], keptIds: Map<string, string>, 
             .map((b) => String(b.text ?? "").trim()),
         )
         .filter(Boolean)
-      for (const window of windows(said.join("\n").split("\n"), size)) chunks.push({ turn: turnIndex + 1, call: "agent", lines: window, terms: terms(window.join("\n")) })
+        .join("\n")
+      const built = chunksOf(said ? `${size}|said|${turnIndex}|${said}` : null, said, "agent", turnIndex + 1, () =>
+        windows(said.split("\n"), size).map((window) => ({ turn: turnIndex + 1, call: "agent", lines: window, terms: terms(window.join("\n")) })),
+      )
+      for (const chunk of built) chunks.push(chunk)
     })
   return chunks
 }
@@ -85,7 +137,147 @@ interface RankedChunk {
   matched: number
 }
 
+interface Postings {
+  chunks: RecallChunk[]
+  counts: number[]
+}
+
+interface CorpusIndex {
+  members: Set<RecallChunk>
+  postings: Map<string, Postings>
+}
+
+const INDEXED_FROM = 2_000
+const KEPT_INDEXES = 6
+const SAMPLED = 32
+
+const indexes: CorpusIndex[] = []
+
+function addToIndex(index: CorpusIndex, chunk: RecallChunk) {
+  index.members.add(chunk)
+  const counts = new Map<string, number>()
+  for (const term of chunk.terms) counts.set(term, (counts.get(term) ?? 0) + 1)
+  for (const [term, count] of counts) {
+    const postings = index.postings.get(term)
+    if (postings) {
+      postings.chunks.push(chunk)
+      postings.counts.push(count)
+    } else index.postings.set(term, { chunks: [chunk], counts: [count] })
+  }
+}
+
+function overlap(index: CorpusIndex, chunks: RecallChunk[]): number {
+  const step = Math.max(1, Math.floor(chunks.length / SAMPLED))
+  let found = 0
+  let sampled = 0
+  for (let i = 0; i < chunks.length; i += step) {
+    sampled += 1
+    if (index.members.has(chunks[i])) found += 1
+  }
+  return found / Math.max(1, sampled)
+}
+
+function indexFor(chunks: RecallChunk[]): CorpusIndex {
+  let best: CorpusIndex | null = null
+  let bestOverlap = 0.5
+  for (const index of indexes) {
+    const shared = overlap(index, chunks)
+    if (shared >= bestOverlap) {
+      best = index
+      bestOverlap = shared
+    }
+  }
+  let present = 0
+  if (best) for (const chunk of chunks) if (best.members.has(chunk)) present += 1
+  if (!best || best.members.size - present > chunks.length / 2) {
+    if (best) indexes.splice(indexes.indexOf(best), 1)
+    best = { members: new Set(), postings: new Map() }
+    present = 0
+  } else indexes.splice(indexes.indexOf(best), 1)
+  indexes.push(best)
+  if (indexes.length > KEPT_INDEXES) indexes.shift()
+  if (present < chunks.length) for (const chunk of chunks) if (!best.members.has(chunk)) addToIndex(best, chunk)
+  return best
+}
+
+let warming: { chunks: RecallChunk[]; index: CorpusIndex; next: number } | null = null
+
+export function warmIndex(chunks: RecallChunk[], until: number): boolean {
+  if (chunks.length < INDEXED_FROM) return true
+  if (warming?.chunks !== chunks) {
+    const index: CorpusIndex = { members: new Set(), postings: new Map() }
+    indexes.push(index)
+    if (indexes.length > KEPT_INDEXES) indexes.shift()
+    warming = { chunks, index, next: 0 }
+  }
+  const { index } = warming
+  while (warming.next < chunks.length) {
+    const chunk = chunks[warming.next]
+    warming.next += 1
+    if (!index.members.has(chunk)) addToIndex(index, chunk)
+    if (warming.next < chunks.length && performance.now() > until) return false
+  }
+  warming = null
+  return true
+}
+
+function indexedAll(queries: string[][], chunks: RecallChunk[], minTerms: number): RankedChunk[][] | null {
+  const position = new Map<RecallChunk, number>()
+  let total = 0
+  chunks.forEach((chunk, i) => {
+    position.set(chunk, i)
+    total += chunk.terms.length
+  })
+  if (position.size !== chunks.length) return null
+  const index = indexFor(chunks)
+  const average = total / Math.max(1, chunks.length)
+  const hitsByTerm = new Map<string, Array<[number, number]>>()
+  const hitsOf = (term: string) => {
+    const known = hitsByTerm.get(term)
+    if (known) return known
+    const hits: Array<[number, number]> = []
+    const postings = index.postings.get(term)
+    if (postings)
+      postings.chunks.forEach((chunk, k) => {
+        const at = position.get(chunk)
+        if (at !== undefined) hits.push([at, postings.counts[k]])
+      })
+    hitsByTerm.set(term, hits)
+    return hits
+  }
+  return queries.map((query) => {
+    const lists = [...new Set(query)].map(hitsOf)
+    const needed = Math.max(1, Math.min(minTerms, lists.filter((hits) => hits.length > 0).length))
+    const found = new Map<number, Array<[number, number]>>()
+    lists.forEach((hits, k) => {
+      for (const [at, f] of hits) {
+        const mine = found.get(at)
+        if (mine) mine.push([k, f])
+        else found.set(at, [[k, f]])
+      }
+    })
+    const scored: RankedChunk[] = []
+    for (const at of [...found.keys()].sort((a, b) => a - b)) {
+      const mine = found.get(at) as Array<[number, number]>
+      if (mine.length < needed) continue
+      const length = chunks[at].terms.length
+      let score = 0
+      for (const [k, f] of mine) {
+        const n = lists[k].length
+        const idf = Math.log(1 + (chunks.length - n + 0.5) / (n + 0.5))
+        score += (idf * (f * (BM25_K1 + 1))) / (f + BM25_K1 * (1 - BM25_B + (BM25_B * length) / average))
+      }
+      if (score > 0) scored.push({ index: at, score, matched: mine.length })
+    }
+    return scored.sort((a, b) => b.score - a.score)
+  })
+}
+
 function rankAll(queries: string[][], chunks: RecallChunk[], minTerms = 2): RankedChunk[][] {
+  return (chunks.length >= INDEXED_FROM && indexedAll(queries, chunks, minTerms)) || scanAll(queries, chunks, minTerms)
+}
+
+function scanAll(queries: string[][], chunks: RecallChunk[], minTerms: number): RankedChunk[][] {
   const ids = new Map<string, number>()
   for (const query of queries) for (const term of query) if (!ids.has(term)) ids.set(term, ids.size)
   const df = new Int32Array(ids.size)

@@ -117,27 +117,50 @@ export function subagentMessages(run: SubagentRun): Message[] {
   return entryMessages(subagentEntries(run))
 }
 
-function launchedBy(run: SubagentRun, call: { id?: unknown; name?: unknown; prompt?: unknown }): boolean {
-  if (run.toolUseId) return call.id === run.toolUseId
-  return (call.name === "Agent" || call.name === "Task") && String(call.prompt ?? "") === run.prompt
+interface Launches {
+  byId: Map<unknown, number>
+  byPrompt: Map<string, number>
 }
 
+function launchesIn(parentMessages: Message[]): Launches {
+  const launches: Launches = { byId: new Map(), byPrompt: new Map() }
+  splitTurns(parentMessages).turns.forEach((turn, index) => {
+    for (const message of turn) {
+      if (message.role !== "assistant") continue
+      for (const block of blocks(message)) {
+        if (block.type !== "tool_use") continue
+        if (!launches.byId.has(block.id)) launches.byId.set(block.id, index + 1)
+        const prompt = String(block.input?.prompt ?? "")
+        if ((block.name === "Agent" || block.name === "Task") && !launches.byPrompt.has(prompt)) launches.byPrompt.set(prompt, index + 1)
+      }
+    }
+  })
+  return launches
+}
+
+const launchTurn = (run: SubagentRun, launches: Launches) => (run.toolUseId ? launches.byId.get(run.toolUseId) : launches.byPrompt.get(run.prompt)) ?? 0
+
 export function parentTurnOf(run: SubagentRun, parentMessages: Message[]): number {
-  const { turns } = splitTurns(parentMessages)
-  const index = turns.findIndex((turn) =>
-    turn
-      .filter((message) => message.role === "assistant")
-      .flatMap(blocks)
-      .some((block) => block.type === "tool_use" && launchedBy(run, { id: block.id, name: block.name, prompt: block.input?.prompt })),
-  )
-  return index + 1
+  return launchTurn(run, launchesIn(parentMessages))
+}
+
+const KEPT_LAUNCHES = 8
+const launchCache = new Map<Message[], Launches>()
+
+function cachedLaunches(parentMessages: Message[]): Launches {
+  const known = launchCache.get(parentMessages)
+  if (known) return known
+  const launches = launchesIn(parentMessages)
+  launchCache.set(parentMessages, launches)
+  if (launchCache.size > KEPT_LAUNCHES) launchCache.delete(launchCache.keys().next().value as Message[])
+  return launches
 }
 
 export function subagentChunks(sessionFile: string): RecallChunk[] {
-  const parent = sessionMessages(sessionFile)
+  const launches = cachedLaunches(sessionMessages(sessionFile))
   return subagentRuns(sessionFile).flatMap((run) => {
     const key = `${run.file}#${run.id}`
-    const parentTurn = parentTurnOf(run, parent)
+    const parentTurn = launchTurn(run, launches)
     const hit = chunkCache.get(key)
     if (hit && hit.mtimeMs === run.mtimeMs && hit.parentTurn === parentTurn) return hit.chunks
     const from = `subagent "${run.description}"`

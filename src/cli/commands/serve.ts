@@ -1,5 +1,6 @@
 import { readConfig } from "../../config"
 import { serve as startProxy } from "../../proxy/server"
+import { warmRecentSessions } from "../../proxy/warm"
 import { VERSION } from "../../version"
 import type { Command } from "../command"
 import { proxyUrl } from "../proxy/claude-settings"
@@ -30,6 +31,7 @@ export const serve: Command = {
     process.on("uncaughtException", keepGoing)
     process.on("unhandledRejection", keepGoing)
     await bind(config.port)
+    if (config.mode !== "off") void warmRecentSessions(config).catch(keepGoing)
     line(`${c.bold("eunoe")} ${c.dim(VERSION)}  listening on ${c.cyan(proxyUrl(config.port))}  ${c.dim(`mode ${config.mode} · Ctrl-C to stop`)}`)
   },
 }

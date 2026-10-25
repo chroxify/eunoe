@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { Message } from "../src/context/content"
 import { salientLines, turnEvidence } from "../src/context/fold/evidence"
 import { trimMessages } from "../src/context/fold/strategies"
-import { recallChunks, recallFor, withRecall } from "../src/context/recall"
+import { type RecallChunk, rank, recallChunks, recallFor, terms, warmIndex, withRecall } from "../src/context/recall"
 import { rewrite } from "../src/proxy/rewrite"
 import { config, freshSession, reply, user } from "./fixtures"
 
@@ -83,5 +83,47 @@ describe("recall", () => {
   test("only prompts carry recalls", () => {
     const out = withRecall([user("a"), reply("b")], () => "k", { k: "<recalled-context>x</recalled-context>" })
     expect(JSON.stringify(out[1])).not.toContain("recalled")
+  })
+})
+
+describe("ranking a large corpus", () => {
+  const words = ["lease", "deploy", "staging", "billing", "worker", "queue", "timeout", "retry", "parser", "index", "cache", "token"]
+  const corpus = (n: number, seed: number): RecallChunk[] =>
+    Array.from({ length: n }, (_, i) => {
+      const line = Array.from({ length: 3 + ((i * seed) % 9) }, (_slot, j) => words[(i * 7 + j * seed) % words.length]).join(" ")
+      return { turn: i, call: `Bash: step ${i}`, lines: [line], terms: terms(`step ${i} ${line}`) }
+    })
+  const reference = (query: string[], chunks: RecallChunk[], minTerms = 2) => {
+    const asked = [...new Set(query)]
+    const df = asked.map((term) => chunks.filter((c) => c.terms.includes(term)).length)
+    const average = chunks.reduce((s, c) => s + c.terms.length, 0) / chunks.length
+    const needed = Math.max(1, Math.min(minTerms, df.filter((n) => n > 0).length))
+    return chunks
+      .map((chunk, index) => {
+        const found = asked.map((term, k) => [k, chunk.terms.filter((t) => t === term).length]).filter(([, f]) => f > 0)
+        let score = 0
+        for (const [k, f] of found) score += (Math.log(1 + (chunks.length - df[k] + 0.5) / (df[k] + 0.5)) * (f * 2.2)) / (f + 1.2 * (0.25 + (0.75 * chunk.terms.length) / average))
+        return { index, score, matched: found.length }
+      })
+      .filter((hit, index) => hit.matched >= needed && hit.score > 0 && index >= 0)
+      .sort((a, b) => b.score - a.score)
+  }
+
+  test("the index scores exactly as a full scan does, as the corpus grows and loses chunks", () => {
+    const chunks = corpus(3_000, 5)
+    const query = terms("why did the staging deploy lease timeout retry")
+    expect(rank(query, chunks)).toEqual(reference(query, chunks))
+    const grown = [...chunks.slice(100), ...corpus(500, 3)]
+    expect(rank(query, grown)).toEqual(reference(query, grown))
+    expect(rank(terms("parser cache"), grown, 1)).toEqual(reference(terms("parser cache"), grown, 1))
+  })
+
+  test("an index warmed a slice at a time ranks the same as one built at once", () => {
+    const chunks = corpus(2_500, 11)
+    let slices = 0
+    while (!warmIndex(chunks, performance.now() - 1)) slices += 1
+    expect(slices).toBeGreaterThan(100)
+    const query = terms("billing worker queue token")
+    expect(rank(query, chunks)).toEqual(reference(query, chunks))
   })
 })

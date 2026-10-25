@@ -407,9 +407,10 @@ Recall works out of the box, but it gets noticeably better with
 [Jev](https://typesafe.ai) reordering the candidates. To turn that on, put a
 Typesafe API key in `~/.eunoe/typesafe-key` or in the `TYPESAFE_API_KEY`
 environment variable, and `eunoe status` will show the reranker as active.
-It can't slow anything down, because if Jev errors or takes longer than four
-seconds the recall simply uses the plain keyword order instead. To switch it
-off, run `eunoe settings set rerank off`.
+The cost is time: the first request of each new message waits for Jev, about
+300 ms and at most four seconds, after which the recall falls back to the
+plain keyword order. Every other request is unaffected. To switch it off, run
+`eunoe settings set rerank off`.
 
 ### Logs
 

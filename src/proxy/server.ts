@@ -99,7 +99,7 @@ interface Timing {
 
 const COUNT_TOKENS_ATTEMPTS = 3
 
-export async function handle(request: Request, timing: Timing = { countTokensTimeoutMs: 20_000 }): Promise<Response> {
+export async function handle(request: Request, timing: Timing = { countTokensTimeoutMs: 10_000 }): Promise<Response> {
   const began = Date.now()
   try {
     return await route(request, began, timing)
@@ -111,7 +111,9 @@ export async function handle(request: Request, timing: Timing = { countTokensTim
 
 async function route(request: Request, began: number, timing: Timing): Promise<Response> {
   let stalled = 0
-  const log = (record: Record<string, unknown>) => logRequest({ ...record, ms: Date.now() - began, ...(stalled > 0 && { stalled }) })
+  let prep = 0
+  let upload = 0
+  const log = (record: Record<string, unknown>) => logRequest({ ...record, ms: Date.now() - began, prep, upload, ...(stalled > 0 && { stalled }) })
   const config = readConfig()
   const url = new URL(request.url)
   if (url.pathname === HEALTH_PATH) return Response.json({ ok: true, version: VERSION, mode: config.mode, pid: process.pid, startedAt } satisfies Health)
@@ -120,6 +122,7 @@ async function route(request: Request, began: number, timing: Timing): Promise<R
 
   let givenText: string | undefined
   if (request.method !== "GET" && request.method !== "HEAD") givenText = await request.text()
+  upload = Date.now() - began
   const isMessages = request.method === "POST" && url.pathname.startsWith("/v1/messages")
   const isCountTokens = url.pathname.includes("count_tokens")
 
@@ -160,6 +163,7 @@ async function route(request: Request, began: number, timing: Timing): Promise<R
   }
 
   let out = await build()
+  prep = Date.now() - began - upload
   let upstream = await send(out.bodyText)
   const errorResponse = (text: string) => new Response(text, { status: upstream.status, statusText: upstream.statusText, headers: forwardableHeaders(upstream.headers) })
 

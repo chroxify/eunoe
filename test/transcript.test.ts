@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { claudeConfigDirs, normalizeConfig } from "../src/config"
 import { searchGuide } from "../src/context/prompts"
-import { readSessionEntries } from "../src/transcript/entries"
+import { readSessionEntries, readSessionSlice } from "../src/transcript/entries"
 import { findSessionFile } from "../src/transcript/locate"
 import { renderTranscript } from "../src/transcript/render"
 import { flushTranscripts, prepareTranscript } from "../src/transcript/search"
@@ -131,6 +131,17 @@ describe("reading a session file as it grows", () => {
     expect(uuids(file)).toEqual(["1", "2"])
     appendFileSync(file, `\n${line(3)}`)
     expect(uuids(file)).toEqual(["1", "2", "3"])
+  })
+
+  test("a file read a slice at a time ends up the same as one read whole, even when it grows meanwhile", () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "eunoe-grow-")), "s.jsonl")
+    writeFileSync(file, Array.from({ length: 40 }, (_, i) => line(i)).join(""))
+    let slices = 0
+    while (!readSessionSlice(file, 200)) slices += 1
+    expect(slices).toBeGreaterThan(3)
+    appendFileSync(file, line(40))
+    expect(uuids(file)).toEqual(Array.from({ length: 41 }, (_, i) => String(i)))
+    expect(readSessionSlice(file, 200)).toBe(true)
   })
 
   test("a file rewritten in place is read again from the start", () => {
