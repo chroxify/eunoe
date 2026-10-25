@@ -1,6 +1,6 @@
 {
   "name": "@chroxify/eunoe",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Context management for Claude Code that never forgets what matters.",
   "license": "MIT",
   "repository": {
