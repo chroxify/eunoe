@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, statSync } from "node:fs"
-import { join, relative } from "node:path"
+import { dirname, join, relative, resolve } from "node:path"
 import { parse } from "@babel/parser"
 
 interface Violation {
@@ -26,6 +26,10 @@ const BANNED_VERB_PATTERN = /^(get|fetch|load|set|delete|destroy)[A-Z]/
 const BANNED_VERB_ALLOWLIST = new Set<string>()
 const ALLOWED_COMMENT_PATTERN = /^\s*(biome-ignore|@ts-|#region|#endregion)/
 const GRAB_BAG_FILE = /(^|\/)(constants|types)\.ts$/
+const PORTABLE_ROOTS = ["src/core", "src/context"]
+const HOST_ONLY_IMPORT = /^(node:|bun$|bun:)/
+const HOST_ONLY_MODULES = ["src/proxy", "src/cli", "src/transcript", "src/config"]
+const HOST_ONLY_GLOBALS = new Set(["Bun", "process"])
 
 function listSourceFiles(root: string): string[] {
   const files: string[] = []
@@ -82,6 +86,33 @@ function collectVerbViolations(file: string, program: BabelNode, violations: Vio
   })
 }
 
+function isTypeOnly(node: BabelNode): boolean {
+  if (node.importKind === "type" || node.exportKind === "type") return true
+  const specifiers = (node.specifiers as BabelNode[] | undefined) ?? []
+  return specifiers.length > 0 && specifiers.every((specifier) => specifier.importKind === "type" || specifier.exportKind === "type")
+}
+
+function hostOnlySource(file: string, source: string): boolean {
+  if (HOST_ONLY_IMPORT.test(source)) return true
+  if (!source.startsWith(".")) return false
+  const target = relative(process.cwd(), resolve(dirname(file), source))
+  return HOST_ONLY_MODULES.some((root) => target === root || target.startsWith(`${root}/`))
+}
+
+function collectPortabilityViolations(file: string, program: BabelNode, violations: Violation[]) {
+  walk(program, (node) => {
+    const source = (node.source as { value?: string } | undefined)?.value
+    const line = node.loc?.start.line ?? 0
+    if (source && /^(Import|ExportNamed|ExportAll)Declaration$/.test(node.type) && !isTypeOnly(node) && hostOnlySource(file, source)) {
+      violations.push({ file, line, message: `"${source}" is host-only; src/core and src/context must run in any JavaScript runtime, so take it through an interface instead` })
+    }
+    const object = node.object as BabelNode & { name?: string }
+    if (node.type === "MemberExpression" && object?.type === "Identifier" && HOST_ONLY_GLOBALS.has(object.name ?? "")) {
+      violations.push({ file, line, message: `${object.name} is host-only; src/core and src/context must run in any JavaScript runtime` })
+    }
+  })
+}
+
 function collectGrabBagViolations(file: string, violations: Violation[]) {
   if (!GRAB_BAG_FILE.test(file)) return
   violations.push({ file, line: 1, message: "No constants.ts or types.ts: a value or type lives in the file that uses it, or in the module that owns it" })
@@ -100,6 +131,7 @@ function run() {
       }
       collectCommentViolations(file, parsed.comments ?? [], violations)
       if (VERB_CHECK_ROOTS.some((verbRoot) => file.startsWith(verbRoot))) collectVerbViolations(file, parsed.program, violations)
+      if (PORTABLE_ROOTS.some((portableRoot) => file.startsWith(`${portableRoot}/`))) collectPortabilityViolations(file, parsed.program, violations)
       collectGrabBagViolations(file, violations)
     }
   }

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import type { Message } from "../../src/context/content"
 import { splitTurns } from "../../src/context/fold/turns"
-import { DEFAULT_RATIO, sizeOf } from "../../src/proxy/estimate"
+import { DEFAULT_RATIO, sizeOf } from "../../src/core/estimate"
 import { SESSIONS } from "../planted/paths"
 
 const BUDGETS = [50_000, 100_000, 200_000, 300_000]

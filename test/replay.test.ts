@@ -4,9 +4,9 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { REPLAY_NATIVE_COMPACT_AT, replaySession } from "../src/cli/replay"
 import type { Message } from "../src/context/content"
-import { compact } from "../src/proxy/compaction"
-import { DEFAULT_RATIO, sizeOf } from "../src/proxy/estimate"
-import type { ThreadState } from "../src/proxy/state"
+import { compact } from "../src/core/compaction"
+import { DEFAULT_RATIO, sizeOf } from "../src/core/estimate"
+import type { ThreadState } from "../src/core/state"
 import { call, config, reply, result, session, user } from "./fixtures"
 
 const fixedTokens = 2_000

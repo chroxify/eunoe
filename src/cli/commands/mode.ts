@@ -1,4 +1,5 @@
-import { compactionOwner, MODES, type Mode, readConfig, saveConfig } from "../../config"
+import { compactionOwner, MODES, readConfig, saveConfig } from "../../config"
+import type { Mode } from "../../core/config"
 import type { Command } from "../command"
 import { editSettings, withCompactionOwner } from "../proxy/claude-settings"
 import { routedDirs } from "../proxy/inspect"

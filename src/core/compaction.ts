@@ -1,14 +1,15 @@
-import type { Config } from "../config"
-import type { Body, Message } from "../context/content"
+import { type Body, type Message, quickHash } from "../context/content"
 import { type CompactOptions, capTurns, clearToolResults, compactMessages, countToolResults } from "../context/fold/strategies"
 import { type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "../context/fold/turns"
 import { clearedOutput } from "../context/prompts"
+import type { CoreConfig } from "./config"
 import { DEFAULT_RATIO, type Estimator, estimator, targetSize } from "./estimate"
+import type { RewriteNote } from "./rewrite"
 import { resetCut, type ThreadState } from "./state"
 
 export interface CompactInput {
   body: Body
-  config: Config
+  config: CoreConfig
   state: ThreadState
   window: number | null
   guide: string | null
@@ -24,7 +25,7 @@ const FOLDED_TURNS = 4096
 const folded = new Map<string, Message[]>()
 
 function reduceRemembered(turn: Message[], options: ReduceOptions): Message[] {
-  const key = `${options.evidence ? 1 : 0}:${Bun.hash(JSON.stringify(turn))}`
+  const key = `${options.evidence ? 1 : 0}:${quickHash(JSON.stringify(turn))}`
   const known = folded.get(key)
   if (known) {
     folded.delete(key)
@@ -40,7 +41,7 @@ function reduceRemembered(turn: Message[], options: ReduceOptions): Message[] {
 export interface CompactResult {
   messages: Message[]
   stateChanged: boolean
-  note: Record<string, unknown>
+  note: RewriteNote
 }
 
 interface Rolling {
@@ -58,7 +59,7 @@ function settledCut(turns: Message[][], index: number) {
   return cut
 }
 
-function resolveCut(turns: Message[][], state: ThreadState, config: Config, rollingKeep: number | undefined) {
+function resolveCut(turns: Message[][], state: ThreadState, config: CoreConfig, rollingKeep: number | undefined) {
   let cutIndex = state.cut ? turns.findIndex((turn) => turnFingerprint(turn) === state.cut) : -1
   let stateChanged = false
   if (state.cut && cutIndex === -1) {
@@ -103,18 +104,22 @@ function shrinkToTarget(over: () => boolean, step: () => string, actions: string
 
 const holdsStuck = (state: ThreadState, estimate: number, window: number | null) => window !== null && state.stuck !== undefined && estimate <= state.stuck + STUCK_STEP * window
 
+export type StuckSizes = ReturnType<typeof stuckSizes>
+
 function stuckSizes(messages: Message[], headEnd: number, liveFrom: number, size: Estimator) {
   const of = (list: Message[]) => size.of(list) - size.fixed
   return { fixed: size.fixed, head: of(messages.slice(0, headEnd)), folded: of(messages.slice(headEnd, liveFrom)), live: of(messages.slice(liveFrom)) }
 }
 
 function cutNote(state: ThreadState, cutIndex: number, configuredKeep: number, actions: string[]) {
+  const omitted = cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) - 1 : 0
   return {
-    action: cutIndex > 0 ? "compact" : "full",
+    action: cutIndex > 0 ? ("compact" as const) : ("full" as const),
     compacted: actions.includes("cut") || actions.includes("roll"),
     actions: actions.length > 0 ? actions : undefined,
     cutTurn: cutIndex > 0 ? cutIndex : null,
-    omitted: cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) - 1 : 0,
+    omitted,
+    folded: cutIndex > 0 ? cutIndex - 1 - omitted : 0,
     keep: state.keep,
     cleared: state.cleared,
   }

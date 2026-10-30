@@ -1,4 +1,4 @@
-import { DEFAULT_RATIO } from "../../proxy/estimate"
+import { DEFAULT_RATIO } from "../../core/estimate"
 import { NATIVE_SUMMARY_CHARS, REPLAY_NATIVE_COMPACT_AT } from "../replay"
 import type { RequestRecord } from "./inspect"
 

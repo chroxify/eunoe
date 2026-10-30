@@ -1,9 +1,9 @@
 import type { Config } from "../../config"
 import type { Body, Message } from "../../context/content"
 import { isPrompt, type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "../../context/fold/turns"
-import { compact } from "../../proxy/compaction"
-import { DEFAULT_RATIO, sizeOf } from "../../proxy/estimate"
-import type { ThreadState } from "../../proxy/state"
+import { compact } from "../../core/compaction"
+import { DEFAULT_RATIO, sizeOf } from "../../core/estimate"
+import type { ThreadState } from "../../core/state"
 
 export interface ReplayOptions {
   config: Config

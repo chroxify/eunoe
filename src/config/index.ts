@@ -1,29 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import { CORE_DEFAULTS, type CoreConfig, type Mode } from "../core/config"
 import { EUNOE_DIR, paths } from "./paths"
 
-export type Mode = "off" | "compact" | "default"
 export type SearchMode = "jsonl" | "markdown" | "xml" | "qmd"
 type Scope = "all" | "sessions"
 
-interface EvalConfig {
-  recallOptions?: { maxChars?: number; maxCharsMulti?: number; perQuery?: number }
-  strategy?: "tail" | "guide" | "trim"
-  rolling?: { keep: number; budget: number }
-  forceCut?: boolean
-  trustHeaders?: boolean
-  evidence?: boolean
-  recall?: boolean
-  rerank?: { model: string; candidates?: number; endpoint?: string }
-}
-
-export interface Tunables {
-  compactAt: number
-  keepTurns: number | "all"
-  keep: number
-  budget: number
-  turnCap: number | "off"
+export interface Tunables extends Pick<CoreConfig, "compactAt" | "keepTurns" | "keep" | "budget" | "turnCap"> {
   search: SearchMode
   rerank: string
 }
@@ -34,27 +18,20 @@ interface SessionSettings extends Partial<Tunables> {
   mode?: Mode
 }
 
-export interface Config extends Tunables {
-  mode: Mode
+export interface Config extends CoreConfig, Tunables {
   scope: Scope
   sessions: Record<string, SessionSettings>
   port: number
   upstream: string
   claudeConfigDirs: string[]
   window?: number
-  eval?: EvalConfig
 }
 
 export const DEFAULTS: Config = {
-  mode: "default",
+  ...CORE_DEFAULTS,
   scope: "all",
   sessions: {},
   port: 38663,
-  compactAt: 0.9,
-  keepTurns: "all",
-  keep: 3,
-  budget: 100_000,
-  turnCap: 100_000,
   search: "markdown",
   rerank: "jev-preview",
   upstream: "https://api.anthropic.com",
