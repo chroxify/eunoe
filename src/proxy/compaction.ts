@@ -50,6 +50,8 @@ interface Rolling {
 
 const PROTECTED_OUTPUTS = 5
 
+const STUCK_STEP = 0.1
+
 function settledCut(turns: Message[][], index: number) {
   let cut = index
   while (cut > 1 && JSON.stringify(turns[cut][0].content).includes("[Request interrupted")) cut -= 1
@@ -89,17 +91,37 @@ function dueRoll(turns: Message[][], cutIndex: number, rolling: Rolling, size: E
   return next >= 1 && next > cutIndex && backlog > rolling.budget ? next : null
 }
 
-function shrinkToTarget(over: () => boolean, step: () => string, actions: string[], rebuild: () => void) {
+function shrinkToTarget(over: () => boolean, step: () => string, actions: string[], rebuild: () => void): boolean {
   while (over()) {
     const action = step()
     actions.push(action)
-    if (action === "stuck") return
+    if (action === "stuck") return true
     rebuild()
+  }
+  return false
+}
+
+const holdsStuck = (state: ThreadState, estimate: number, window: number | null) => window !== null && state.stuck !== undefined && estimate <= state.stuck + STUCK_STEP * window
+
+function stuckSizes(messages: Message[], headEnd: number, liveFrom: number, size: Estimator) {
+  const of = (list: Message[]) => size.of(list) - size.fixed
+  return { fixed: size.fixed, head: of(messages.slice(0, headEnd)), folded: of(messages.slice(headEnd, liveFrom)), live: of(messages.slice(liveFrom)) }
+}
+
+function cutNote(state: ThreadState, cutIndex: number, configuredKeep: number, actions: string[]) {
+  return {
+    action: cutIndex > 0 ? "compact" : "full",
+    compacted: actions.includes("cut") || actions.includes("roll"),
+    actions: actions.length > 0 ? actions : undefined,
+    cutTurn: cutIndex > 0 ? cutIndex : null,
+    omitted: cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) - 1 : 0,
+    keep: state.keep,
+    cleared: state.cleared,
   }
 }
 
 export function compact({ body, config, state, window, guide, transcriptDir, mayCompact, omittedBefore = 0, decorate = (m) => m, reduce }: CompactInput): CompactResult {
-  const { turns } = splitTurns(body.messages)
+  const { preamble, turns } = splitTurns(body.messages)
   const rolling = config.eval?.rolling ?? (config.mode === "default" ? { keep: config.keep, budget: config.budget } : undefined)
   const resolved = resolveCut(turns, state, config, rolling?.keep)
   let cutIndex = resolved.cutIndex
@@ -151,12 +173,16 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
   if (mayCompact && estimate > limit) {
     const current = turns.length - 1
     if (current > 0 && current > cutIndex) moveCut(current, "cut")
-    shrinkToTarget(
-      () => estimate > target,
-      () => shrinkOnce(state, cutIndex, configuredKeep, liveResults),
-      actions,
-      rebuild,
-    )
+    if (!holdsStuck(state, estimate, window)) {
+      const stuck = shrinkToTarget(
+        () => estimate > target,
+        () => shrinkOnce(state, cutIndex, configuredKeep, liveResults),
+        actions,
+        rebuild,
+      )
+      if (stuck) state.stuck = estimate
+      else delete state.stuck
+    }
     stateChanged = true
   }
 
@@ -164,13 +190,8 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
     messages,
     stateChanged,
     note: {
-      action: cutIndex > 0 ? "compact" : "full",
-      compacted: actions.includes("cut") || actions.includes("roll"),
-      actions: actions.length > 0 ? actions : undefined,
-      cutTurn: cutIndex > 0 ? cutIndex : null,
-      omitted: cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) - 1 : 0,
-      keep: state.keep,
-      cleared: state.cleared,
+      ...cutNote(state, cutIndex, configuredKeep, actions),
+      stuck: state.stuck === undefined ? undefined : stuckSizes(messages, preamble.length + 2, liveStart(messages), size),
       turns: turns.length,
       messagesIn: body.messages.length,
       messagesOut: messages.length,

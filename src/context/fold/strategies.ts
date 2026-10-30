@@ -1,6 +1,6 @@
 import { type Block, type Body, blocks, type Message, truncate, withoutCacheControl } from "../content"
 import { clearedInput, compactionNotice, truncationNotice } from "../prompts"
-import { hasContent, isHarness, type ReduceOptions, reduceTurn, splitTurns } from "./turns"
+import { hasContent, isHarness, isStaleNote, type ReduceOptions, reduceTurn, splitTurns } from "./turns"
 
 export interface CompactOptions extends ReduceOptions {
   keepTurns: number
@@ -16,6 +16,26 @@ export function trimMessages(messages: Message[], options: ReduceOptions = {}): 
   return [...preamble, ...turns.slice(0, -1).flatMap((turn) => reduceTurn(turn, options)), ...(turns.at(-1) ?? [])]
 }
 
+export const CARRIED_CHARS = 80_000
+
+function carriedHarness(removed: Message[]): Block[] {
+  const texts = removed
+    .filter((m) => isHarness(m) && hasContent(m))
+    .flatMap((m) => blocks(m).filter((b) => b.type === "text"))
+    .map((b) => String(b.text ?? ""))
+    .filter((text) => text.trim() && !isStaleNote(text))
+  const kept: string[] = []
+  const seen = new Set<string>()
+  let used = 0
+  for (const text of texts.toReversed()) {
+    if (seen.has(text) || used + text.length > CARRIED_CHARS) continue
+    seen.add(text)
+    kept.push(text)
+    used += text.length
+  }
+  return kept.toReversed().map((text) => ({ type: "text", text: `<system-reminder>\n${text}\n</system-reminder>` }))
+}
+
 export function compactMessages(messages: Message[], cutIndex: number, options: CompactOptions): Message[] {
   const { preamble, turns } = splitTurns(messages)
   if (cutIndex <= 0 || cutIndex >= turns.length) return messages
@@ -23,11 +43,7 @@ export function compactMessages(messages: Message[], cutIndex: number, options: 
   const keptFrom = Math.max(1, cutIndex - options.keepTurns)
   const notice = compactionNotice({ omitted: keptFrom - 1 + (options.omittedBefore ?? 0), kept: cutIndex - keptFrom, guide: options.guide })
   const removed = [...turns[0].slice(1), ...turns.slice(1, keptFrom).flat()]
-  const carried = removed
-    .filter((m) => isHarness(m) && hasContent(m))
-    .flatMap((m) => blocks(m).filter((b) => b.type === "text"))
-    .map((b) => ({ type: "text", text: `<system-reminder>\n${b.text}\n</system-reminder>` }))
-  return [...preamble, turns[0][0], { role: "user", content: [{ type: "text", text: notice }, ...carried] }, ...turns.slice(keptFrom, cutIndex).flatMap((turn) => reduce(turn, options)), ...turns.slice(cutIndex).flat()]
+  return [...preamble, turns[0][0], { role: "user", content: [{ type: "text", text: notice }, ...carriedHarness(removed)] }, ...turns.slice(keptFrom, cutIndex).flatMap((turn) => reduce(turn, options)), ...turns.slice(cutIndex).flat()]
 }
 
 export function capTurns(messages: Message[], options: CompactOptions): Message[] {
