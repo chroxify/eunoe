@@ -18,12 +18,21 @@
     "proxy"
   ],
   "type": "module",
+  "exports": {
+    ".": {
+      "bun": "./src/core/index.ts",
+      "types": "./dist/types/core/index.d.ts",
+      "default": "./dist/core/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "eunoe": "src/cli/main.ts",
     "ee": "src/cli/main.ts"
   },
   "files": [
     "src",
+    "dist",
     "README.md",
     "LICENSE"
   ],
@@ -34,11 +43,13 @@
     "start": "bun src/cli/main.ts serve",
     "test": "bun test",
     "check-types": "tsc --noEmit -p .",
+    "build:core": "bun scripts/build-core.ts",
     "lint": "biome check . && bun lint:conventions",
     "lint:conventions": "bun scripts/lint-conventions.ts",
     "format": "biome check .",
     "format:fix": "biome check . --write",
-    "prepare": "husky"
+    "prepare": "husky",
+    "prepublishOnly": "bun run build:core"
   },
   "devDependencies": {
     "@babel/parser": "7.27.0",

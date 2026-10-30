@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": ["src/core/index.ts", "test/**/*.test.ts", "bench/**/*.ts", "scripts/*.ts"],
-  "project": ["src/**", "test/**", "bench/**", "scripts/**"],
+  "entry": ["test/**/*.test.ts", "bench/**/*.ts", "scripts/*.ts", "examples/*.ts"],
+  "project": ["src/**", "test/**", "bench/**", "scripts/**", "examples/**"],
   "ignoreUnresolved": ["bun-types"]
 }

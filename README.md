@@ -430,6 +430,94 @@ reads, and every token a fold rewrote is charged back at the cache-write price.
 deletes sessions that have been idle for 30 days unless `cleanupPeriodDays` in
 its `settings.json` says otherwise.
 
+## Embedding
+
+The proxy is one host of a small library. Anything that sends Anthropic
+Messages requests can use the same folding, recall and estimates: a
+forwarding server, an agent loop of your own, a Cloudflare Durable Object,
+another proxy. The core reads no files, no environment and no global
+config, and it runs in Node, Bun, Deno and Workers.
+
+```sh
+npm install @chroxify/eunoe
+```
+
+```ts
+import { CORE_DEFAULTS, memoryStore, rewrite } from "@chroxify/eunoe"
+
+const store = memoryStore()
+const { body, note } = rewrite({
+  body: request,             // the Messages request you were about to send
+  threadId: conversationId,  // anything stable per conversation
+  config: { ...CORE_DEFAULTS, mode: "compact" },
+  store,
+  window: 200_000,           // the model's context window
+  mayCompact: true,          // false for count_tokens and other side calls
+})
+// send `body` instead of `request`; `note` says what happened
+```
+
+`rewrite` is a pure function of the request and the thread's saved state,
+so the same history always produces the same bytes and the prompt cache
+holds. Everything it needs from outside comes in through three small
+pieces:
+
+| | |
+|---|---|
+| `ThreadStore` | `read(key)` and `save(key, state)`, synchronous. `memoryStore()` keeps state in memory; give it your own to persist across restarts. |
+| `ThreadSources` | optional: `readHistory()` for the whole conversation when you send a shortened one, `findHandoff` and `readHandoff` for `{ee:continue:…}`, `guide` and `transcriptDir` when the agent can search a transcript. |
+| `Reranker` | optional, for `rewriteAsync`: reorders recall candidates. `jevReranker(model, key)` is the one the proxy uses. |
+
+In a Durable Object, SQLite-backed storage is synchronous, so the store is
+two lines:
+
+```ts
+const store = {
+  read: (key) => this.ctx.storage.kv.get(key) ?? {},
+  save: (key, state) => this.ctx.storage.kv.put(key, state),
+}
+```
+
+### Folding at a boundary you know
+
+A host often knows better than any token count when a step is over. After a
+planning step, fold every earlier turn and keep only the plan whole:
+
+```ts
+import { foldThread, pinTurns } from "@chroxify/eunoe"
+
+messages.push({ role: "user", content: "Build step one." })
+foldThread({ store, threadId, messages }, { at: "latest", pin: [planTurn] })
+```
+
+Turns are numbered as `note.cutTurn` numbers them, from 0 for the first
+prompt, and the boundary must be a turn that already exists, so fold once
+the next step's prompt is in the list. Every turn before the boundary is
+folded to the user's message, the evidence and the reply. Pinned turns are
+sent whole, with their tool calls, and stay whole even when a later
+automatic cut drops the turns around them. `pinTurns(target, [n], false)`
+releases one. A host fold applies in every mode, `off` included, and its
+output stays byte-stable from one request to the next.
+
+### The note
+
+Every call returns a note: `action` (`pass`, `full` or `compact`),
+`cutTurn`, `folded`, `omitted`, `pinned`, `estimate` in tokens, `fit` when
+the request had to be trimmed to fit (`recut`, `bare` or `over`), and
+`stuck` when even the cut leaves it over its target. `stuck` gives the
+tokens in each part (`fixed`, `head`, `folded`, `live`) so the host can
+act: start a fresh conversation with a handoff, or fold at its own
+boundary. While a thread is stuck, eunoe holds what it cleared still
+instead of clearing a little more on every request, so the cache keeps
+hitting.
+
+[`examples/`](examples) has three hosts that run as they are: a
+[forwarding server](examples/forwarding-server.ts) on `node:http` with a
+`/fold` endpoint, a [custom agent loop](examples/agent-loop.ts) that folds
+at each step and keeps its plan pinned, and a
+[Claude Code proxy](examples/proxy.ts) with a file-backed store, which is
+what `eunoe serve` does with more around it.
+
 ## What it doesn't do
 
 - **It is a proxy, which makes it a single point of failure.** If it isn't
@@ -442,8 +530,9 @@ its `settings.json` says otherwise.
   502 that Claude Code retries, never a hang. Sessions that were already
   running keep the old address until restarted, so they wait for the proxy
   rather than falling back.
-- **It only understands Claude Code's shape of conversation.** Other
-  Anthropic API clients pass through unchanged and get nothing out of it.
+- **The proxy only understands Claude Code's shape of conversation.** Other
+  Anthropic API clients pass through it unchanged and get nothing out of
+  it; they can [embed the library](#embedding) instead.
 - **It can't recover what Claude Code already compacted,** so turn it on
   before a long session rather than after.
 - **Recall is keyword search.** Ask about "the deploy that failed" and it

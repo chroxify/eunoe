@@ -1,4 +1,3 @@
-import type { TranscriptRef } from "../transcript/search"
 import { truncate } from "./content"
 
 interface NoticeCounts {
@@ -139,7 +138,7 @@ export function searchOnlyInstructions(guide: string): string {
   ].join("\n")
 }
 
-export function searchGuide(ref: TranscriptRef): string {
+export function searchGuide(ref: { mode: string; jsonl: string; dir: string }): string {
   if (ref.mode === "jsonl") {
     return [
       `The full transcript is Claude Code's session file: ${ref.jsonl}`,

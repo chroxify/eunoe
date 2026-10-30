@@ -19,7 +19,7 @@ interface BabelNode {
   [key: string]: unknown
 }
 
-const ROOTS = ["src", "test", "bench", "scripts"]
+const ROOTS = ["src", "test", "bench", "scripts", "examples"]
 const SKIPPED_SEGMENTS = new Set(["node_modules", "out", "models"])
 const VERB_CHECK_ROOTS = ["src"]
 const BANNED_VERB_PATTERN = /^(get|fetch|load|set|delete|destroy)[A-Z]/
