@@ -38,6 +38,8 @@ export type RewriteNote = {
   cutTurn?: number | null
   omitted?: number
   folded?: number
+  pinned?: number
+  host?: boolean
   keep?: number
   cleared?: number
   stuck?: StuckSizes
@@ -101,15 +103,17 @@ function evalStrategy(input: RewriteInput, turns: Message[][], threadKey: string
 function strategize(input: RewriteInput): Rewrite {
   const { body, threadId, config, store } = input
   const sources = input.sources ?? {}
-  if (config.mode === "off" || !threadId || !Array.isArray(body.messages) || body.messages.length === 0) return pass(body)
+  if (!threadId || !Array.isArray(body.messages) || body.messages.length === 0) return pass(body)
   const threadKey = threadKeyOf(threadId, body.messages)
   if (!threadKey) return pass(body)
+  const off = config.mode === "off"
+  const state = store.read(threadKey)
+  if (off && !state.host) return pass(body)
   const { turns } = splitTurns(body.messages)
   const guide = sources.guide ?? null
-  const state = store.read(threadKey)
-  if (attachHandoffs(body.messages, sources, state)) store.save(threadKey, state)
+  if (!off && attachHandoffs(body.messages, sources, state)) store.save(threadKey, state)
 
-  const forced = evalStrategy(input, turns, threadKey, guide)
+  const forced = off ? null : evalStrategy(input, turns, threadKey, guide)
   if (forced) return forced
 
   const based = isAgentThread(body) ? { ...body, system: withSystemPrompt(body.system) } : body
@@ -123,7 +127,7 @@ function strategize(input: RewriteInput): Rewrite {
     window: input.window,
     guide,
     transcriptDir: sources.transcriptDir ?? null,
-    mayCompact: input.mayCompact,
+    mayCompact: input.mayCompact && !off,
     omittedBefore: input.omittedBefore,
     decorate: (messages) => withRecall(withHandoffs(messages, handoffs), messageFingerprint, recalls),
   })

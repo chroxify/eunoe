@@ -10,6 +10,8 @@ export interface ThreadState {
   keep?: number
   cleared?: number
   stuck?: number
+  host?: boolean
+  pins?: string[]
   ratio?: number
   recalls?: Record<string, string>
 }
@@ -34,4 +36,5 @@ export function resetCut(state: ThreadState) {
   delete state.keep
   delete state.cleared
   delete state.stuck
+  delete state.host
 }

@@ -4,6 +4,7 @@ import { truncate } from "./content"
 interface NoticeCounts {
   omitted: number
   kept: number
+  pinned?: number
   guide: string | null
 }
 
@@ -68,7 +69,7 @@ export function clearedInput(kept: string, cleared: number): string {
   return `${kept}… [${cleared} chars cleared; in the transcript]`
 }
 
-export function compactionNotice({ omitted, kept, guide }: NoticeCounts): string {
+export function compactionNotice({ omitted, kept, pinned = 0, guide }: NoticeCounts): string {
   return [
     "<context-compacted>",
     "Your context was compacted here, so tool calls and their output from before this point were removed.",
@@ -77,6 +78,7 @@ export function compactionNotice({ omitted, kept, guide }: NoticeCounts): string
       : kept > 0
         ? "Every earlier turn is shown below as the user's message and your final reply."
         : "",
+    pinned > 0 ? `${pinned === 1 ? "One earlier turn was" : `${pinned} earlier turns were`} kept whole, with their tool calls and output, because they matter to what comes next.` : "",
     "The turn that was in progress when the context filled up follows in full. Continue from it.",
     "Instructions and preferences the user gave in earlier turns still apply: how they want things done, and what to do or not do on your own. Look back over their messages before you act.",
     "For an exact detail from before this point (an ID, a path, a command, an error, a value, what a tool printed), look it up instead of going from memory. A lookup is cheap; a wrong detail is not. Never say you don't know about something earlier in this session without searching for it first, and if what you remember contradicts what the user says, search before telling them they are wrong.",

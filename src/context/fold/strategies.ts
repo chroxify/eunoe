@@ -1,6 +1,6 @@
-import { type Block, type Body, blocks, type Message, truncate, withoutCacheControl } from "../content"
+import { type Block, type Body, blocks, clean, type Message, truncate, withoutCacheControl } from "../content"
 import { clearedInput, compactionNotice, truncationNotice } from "../prompts"
-import { hasContent, isHarness, isStaleNote, type ReduceOptions, reduceTurn, splitTurns } from "./turns"
+import { hasContent, isHarness, isStaleNote, type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "./turns"
 
 export interface CompactOptions extends ReduceOptions {
   keepTurns: number
@@ -8,7 +8,15 @@ export interface CompactOptions extends ReduceOptions {
   guide: string | null
   omittedBefore?: number
   reduce?: (turn: Message[], options: ReduceOptions) => Message[]
+  pinned?: ReadonlySet<string>
 }
+
+const pinnedBy =
+  ({ pinned }: CompactOptions) =>
+  (turn: Message[]) =>
+    pinned !== undefined && pinned.size > 0 && pinned.has(turnFingerprint(turn))
+
+export const countPinned = (turns: Message[][], pinned: ReadonlySet<string>) => (pinned.size > 0 ? turns.filter((turn) => pinned.has(turnFingerprint(turn))).length : 0)
 
 export function trimMessages(messages: Message[], options: ReduceOptions = {}): Message[] {
   const { preamble, turns } = splitTurns(messages)
@@ -40,10 +48,24 @@ export function compactMessages(messages: Message[], cutIndex: number, options: 
   const { preamble, turns } = splitTurns(messages)
   if (cutIndex <= 0 || cutIndex >= turns.length) return messages
   const reduce = options.reduce ?? reduceTurn
+  const isPinned = pinnedBy(options)
   const keptFrom = Math.max(1, cutIndex - options.keepTurns)
-  const notice = compactionNotice({ omitted: keptFrom - 1 + (options.omittedBefore ?? 0), kept: cutIndex - keptFrom, guide: options.guide })
-  const removed = [...turns[0].slice(1), ...turns.slice(1, keptFrom).flat()]
-  return [...preamble, turns[0][0], { role: "user", content: [{ type: "text", text: notice }, ...carriedHarness(removed)] }, ...turns.slice(keptFrom, cutIndex).flatMap((turn) => reduce(turn, options)), ...turns.slice(cutIndex).flat()]
+  const [first, ...rest] = turns[0]
+  const opening = isPinned(turns[0]) ? [first, ...rest.map(clean)] : [first]
+  const dropped = turns.slice(1, keptFrom)
+  const whole = dropped.filter(isPinned)
+  const pinned = whole.length + turns.slice(keptFrom, cutIndex).filter(isPinned).length + (opening.length > 1 ? 1 : 0)
+  const notice = compactionNotice({ omitted: dropped.length - whole.length + (options.omittedBefore ?? 0), kept: cutIndex - keptFrom, pinned, guide: options.guide })
+  const removed = [...(opening.length > 1 ? [] : rest), ...dropped.filter((turn) => !isPinned(turn)).flat()]
+  const shown = (turn: Message[]) => (isPinned(turn) ? turn.map(clean) : reduce(turn, options))
+  return [
+    ...preamble,
+    ...opening,
+    { role: "user", content: [{ type: "text", text: notice }, ...carriedHarness(removed)] },
+    ...whole.flatMap((turn) => turn.map(clean)),
+    ...turns.slice(keptFrom, cutIndex).flatMap(shown),
+    ...turns.slice(cutIndex).flat(),
+  ]
 }
 
 export function capTurns(messages: Message[], options: CompactOptions): Message[] {
@@ -52,7 +74,8 @@ export function capTurns(messages: Message[], options: CompactOptions): Message[
   const { preamble, turns } = splitTurns(messages)
   if (turns.length < 3) return messages
   const live = turns.length - 1
-  const over = (turn: Message[], i: number) => i > 0 && i < live && JSON.stringify(turn).length > capChars
+  const isPinned = pinnedBy(options)
+  const over = (turn: Message[], i: number) => i > 0 && i < live && !isPinned(turn) && JSON.stringify(turn).length > capChars
   if (!turns.some(over)) return messages
   const reduce = options.reduce ?? reduceTurn
   return [...preamble, ...turns.flatMap((turn, i) => (over(turn, i) ? reduce(turn, options) : turn))]

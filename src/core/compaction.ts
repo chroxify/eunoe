@@ -1,5 +1,5 @@
 import { type Body, type Message, quickHash } from "../context/content"
-import { type CompactOptions, capTurns, clearToolResults, compactMessages, countToolResults } from "../context/fold/strategies"
+import { type CompactOptions, capTurns, clearToolResults, compactMessages, countPinned, countToolResults } from "../context/fold/strategies"
 import { type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "../context/fold/turns"
 import { clearedOutput } from "../context/prompts"
 import type { CoreConfig } from "./config"
@@ -106,20 +106,26 @@ const holdsStuck = (state: ThreadState, estimate: number, window: number | null)
 
 export type StuckSizes = ReturnType<typeof stuckSizes>
 
+const headLength = (preamble: Message[], first: Message[], state: ThreadState) => preamble.length + 1 + (countPinned([first], new Set(state.pins)) > 0 ? first.length : 1)
+
 function stuckSizes(messages: Message[], headEnd: number, liveFrom: number, size: Estimator) {
   const of = (list: Message[]) => size.of(list) - size.fixed
   return { fixed: size.fixed, head: of(messages.slice(0, headEnd)), folded: of(messages.slice(headEnd, liveFrom)), live: of(messages.slice(liveFrom)) }
 }
 
-function cutNote(state: ThreadState, cutIndex: number, configuredKeep: number, actions: string[]) {
-  const omitted = cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) - 1 : 0
+function cutNote(state: ThreadState, turns: Message[][], cutIndex: number, configuredKeep: number, actions: string[]) {
+  const pins = new Set(state.pins)
+  const keptFrom = cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) : 0
+  const omitted = cutIndex > 0 ? keptFrom - 1 - countPinned(turns.slice(1, keptFrom), pins) : 0
   return {
     action: cutIndex > 0 ? ("compact" as const) : ("full" as const),
     compacted: actions.includes("cut") || actions.includes("roll"),
     actions: actions.length > 0 ? actions : undefined,
     cutTurn: cutIndex > 0 ? cutIndex : null,
     omitted,
-    folded: cutIndex > 0 ? cutIndex - 1 - omitted : 0,
+    folded: cutIndex > 0 ? cutIndex - keptFrom - countPinned(turns.slice(keptFrom, cutIndex), pins) : 0,
+    pinned: cutIndex > 0 ? countPinned(turns.slice(0, cutIndex), pins) : 0,
+    host: state.host,
     keep: state.keep,
     cleared: state.cleared,
   }
@@ -134,7 +140,7 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
 
   const configuredKeep = config.keepTurns === "all" ? Number.MAX_SAFE_INTEGER : config.keepTurns
   const ratio = state.ratio ?? DEFAULT_RATIO
-  const options = { guide, omittedBefore, evidence: config.eval?.evidence ?? true, reduce: reduce ?? reduceRemembered, capChars: config.turnCap === "off" ? undefined : config.turnCap / ratio }
+  const options = { guide, omittedBefore, evidence: config.eval?.evidence ?? true, reduce: reduce ?? reduceRemembered, capChars: config.turnCap === "off" ? undefined : config.turnCap / ratio, pinned: new Set(state.pins) }
   const liveStart = (list: Message[]) =>
     list.length -
     splitTurns(list)
@@ -195,8 +201,8 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
     messages,
     stateChanged,
     note: {
-      ...cutNote(state, cutIndex, configuredKeep, actions),
-      stuck: state.stuck === undefined ? undefined : stuckSizes(messages, preamble.length + 2, liveStart(messages), size),
+      ...cutNote(state, turns, cutIndex, configuredKeep, actions),
+      stuck: state.stuck === undefined ? undefined : stuckSizes(messages, headLength(preamble, turns[0], state), liveStart(messages), size),
       turns: turns.length,
       messagesIn: body.messages.length,
       messagesOut: messages.length,
