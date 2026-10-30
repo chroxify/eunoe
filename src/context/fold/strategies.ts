@@ -44,6 +44,8 @@ function carriedHarness(removed: Message[]): Block[] {
   return kept.toReversed().map((text) => ({ type: "text", text: `<system-reminder>\n${text}\n</system-reminder>` }))
 }
 
+export const foldsOpening = (opening: Message[], keptFrom: number) => keptFrom === 1 && opening.length > 1
+
 export function compactMessages(messages: Message[], cutIndex: number, options: CompactOptions): Message[] {
   const { preamble, turns } = splitTurns(messages)
   if (cutIndex <= 0 || cutIndex >= turns.length) return messages
@@ -51,17 +53,21 @@ export function compactMessages(messages: Message[], cutIndex: number, options: 
   const isPinned = pinnedBy(options)
   const keptFrom = Math.max(1, cutIndex - options.keepTurns)
   const [first, ...rest] = turns[0]
-  const opening = isPinned(turns[0]) ? [first, ...rest.map(clean)] : [first]
+  const openingPinned = isPinned(turns[0])
+  const openingFolded = !openingPinned && foldsOpening(turns[0], keptFrom)
   const dropped = turns.slice(1, keptFrom)
   const whole = dropped.filter(isPinned)
-  const pinned = whole.length + turns.slice(keptFrom, cutIndex).filter(isPinned).length + (opening.length > 1 ? 1 : 0)
-  const notice = compactionNotice({ omitted: dropped.length - whole.length + (options.omittedBefore ?? 0), kept: cutIndex - keptFrom, pinned, guide: options.guide })
-  const removed = [...(opening.length > 1 ? [] : rest), ...dropped.filter((turn) => !isPinned(turn)).flat()]
+  const pinned = whole.length + turns.slice(keptFrom, cutIndex).filter(isPinned).length + (openingPinned ? 1 : 0)
+  const kept = cutIndex - keptFrom + (openingFolded ? 1 : 0)
+  const notice = compactionNotice({ omitted: dropped.length - whole.length + (options.omittedBefore ?? 0), kept, pinned, guide: options.guide })
+  const removed = [...(openingPinned || openingFolded ? [] : rest), ...dropped.filter((turn) => !isPinned(turn)).flat()]
   const shown = (turn: Message[]) => (isPinned(turn) ? turn.map(clean) : reduce(turn, options))
   return [
     ...preamble,
-    ...opening,
+    first,
+    ...(openingPinned ? rest.map(clean) : []),
     { role: "user", content: [{ type: "text", text: notice }, ...carriedHarness(removed)] },
+    ...(openingFolded ? reduce(turns[0], options).slice(1) : []),
     ...whole.flatMap((turn) => turn.map(clean)),
     ...turns.slice(keptFrom, cutIndex).flatMap(shown),
     ...turns.slice(cutIndex).flat(),

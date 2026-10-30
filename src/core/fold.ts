@@ -27,6 +27,7 @@ function located({ store, threadId, messages }: FoldTarget) {
 }
 
 function checkedTurn(turn: number, turns: Message[][], from: number): number {
+  if (turns.length <= from) throw new RangeError(`this thread has ${turns.length} turn${turns.length === 1 ? "" : "s"}, so there is no turn ${turn} to fold at`)
   if (!Number.isInteger(turn) || turn < from || turn >= turns.length) throw new RangeError(`turn ${turn} is outside turns ${from}..${turns.length - 1}`)
   return turn
 }

@@ -28,12 +28,21 @@ function rewritten(text: string, threadId: string, mayCompact: boolean): { text:
   return { text: JSON.stringify(out.body), action: out.note.action }
 }
 
+function folded(text: string): { status: number; json: string } {
+  try {
+    const { threadId, messages, at, pin } = JSON.parse(text)
+    return { status: 200, json: JSON.stringify(foldThread({ store, threadId, messages }, { at, pin })) }
+  } catch (error) {
+    return { status: 400, json: JSON.stringify({ error: String(error) }) }
+  }
+}
+
 createServer(async (request, response) => {
   const url = request.url ?? "/"
   const text = await readText(request)
   if (url === "/fold" && request.method === "POST" && text) {
-    const { threadId, messages, at, pin } = JSON.parse(text)
-    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(foldThread({ store, threadId, messages }, { at, pin })))
+    const { status, json } = folded(text)
+    response.writeHead(status, { "content-type": "application/json" }).end(json)
     return
   }
   const threadId = request.headers["x-thread-id"]

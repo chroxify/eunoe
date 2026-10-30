@@ -1,5 +1,5 @@
 import { type Body, type Message, quickHash } from "../context/content"
-import { type CompactOptions, capTurns, clearToolResults, compactMessages, countPinned, countToolResults } from "../context/fold/strategies"
+import { type CompactOptions, capTurns, clearToolResults, compactMessages, countPinned, countToolResults, foldsOpening } from "../context/fold/strategies"
 import { type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "../context/fold/turns"
 import { clearedOutput } from "../context/prompts"
 import type { CoreConfig } from "./config"
@@ -123,7 +123,7 @@ function cutNote(state: ThreadState, turns: Message[][], cutIndex: number, confi
     actions: actions.length > 0 ? actions : undefined,
     cutTurn: cutIndex > 0 ? cutIndex : null,
     omitted,
-    folded: cutIndex > 0 ? cutIndex - keptFrom - countPinned(turns.slice(keptFrom, cutIndex), pins) : 0,
+    folded: cutIndex > 0 ? cutIndex - keptFrom - countPinned(turns.slice(keptFrom, cutIndex), pins) + (foldsOpening(turns[0], keptFrom) && countPinned([turns[0]], pins) === 0 ? 1 : 0) : 0,
     pinned: cutIndex > 0 ? countPinned(turns.slice(0, cutIndex), pins) : 0,
     host: state.host,
     keep: state.keep,

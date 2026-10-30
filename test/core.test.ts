@@ -119,9 +119,20 @@ describe("host folds", () => {
       expect(text).toContain("Handed over.")
       expect(text).toContain("kept whole, with their tool calls")
       expect(text).toContain("build phase 1")
-      expect(out.note).toMatchObject({ action: "compact", cutTurn: PLAN_TURN + 1, pinned: 1, folded: 5, omitted: 0, host: true })
+      expect(out.note).toMatchObject({ action: "compact", cutTurn: PLAN_TURN + 1, pinned: 1, folded: 6, omitted: 0, host: true })
     })
   }
+
+  test("the first turn folds like the rest instead of losing its reply", () => {
+    const store = memoryStore()
+    const messages = [user("plan it"), reply("PLAN-ZERO: two steps"), user("step one"), call("s1"), result("s1"), reply("step one done"), user("step two")]
+    foldThread({ store, threadId: "host-thread", messages })
+    const out = send(store, messages)
+    expect(sent(out.body.messages)).toContain("PLAN-ZERO")
+    expect(sent(out.body.messages)).toContain("step one done")
+    expect(sent(out.body.messages.slice(0, -1))).not.toContain("step s1")
+    expect(out.note).toMatchObject({ cutTurn: 2, folded: 2, omitted: 0 })
+  })
 
   test("without a host fold, off mode still passes through", () => {
     expect(send(memoryStore(), history, "off").note.action).toBe("pass")
