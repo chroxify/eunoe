@@ -1,6 +1,6 @@
 import { type Body, type Message, quickHash } from "../context/content"
 import { type CompactOptions, capTurns, clearToolResults, compactMessages, countPinned, countToolResults, foldsOpening } from "../context/fold/strategies"
-import { type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "../context/fold/turns"
+import { type ReduceOptions, reduceTurn, splitTurns, turnKeys } from "../context/fold/turns"
 import { clearedOutput } from "../context/prompts"
 import type { CoreConfig } from "./config"
 import { DEFAULT_RATIO, type Estimator, estimator, targetSize } from "./estimate"
@@ -59,8 +59,8 @@ function settledCut(turns: Message[][], index: number) {
   return cut
 }
 
-function resolveCut(turns: Message[][], state: ThreadState, config: CoreConfig, rollingKeep: number | undefined) {
-  let cutIndex = state.cut ? turns.findIndex((turn) => turnFingerprint(turn) === state.cut) : -1
+function resolveCut(turns: Message[][], keys: string[], state: ThreadState, config: CoreConfig, rollingKeep: number | undefined) {
+  let cutIndex = state.cut ? keys.indexOf(state.cut) : -1
   let stateChanged = false
   if (state.cut && cutIndex === -1) {
     resetCut(state)
@@ -68,7 +68,7 @@ function resolveCut(turns: Message[][], state: ThreadState, config: CoreConfig, 
   }
   if (cutIndex <= 0 && config.eval?.forceCut && turns.length >= 3) {
     cutIndex = settledCut(turns, Math.max(1, turns.length - 1 - (rollingKeep ?? 1)))
-    state.cut = turnFingerprint(turns[cutIndex])
+    state.cut = keys[cutIndex]
     stateChanged = true
   }
   return { cutIndex, stateChanged }
@@ -106,25 +106,25 @@ const holdsStuck = (state: ThreadState, estimate: number, window: number | null)
 
 export type StuckSizes = ReturnType<typeof stuckSizes>
 
-const headLength = (preamble: Message[], first: Message[], state: ThreadState) => preamble.length + 1 + (countPinned([first], new Set(state.pins)) > 0 ? first.length : 1)
+const headLength = (preamble: Message[], first: Message[], firstKey: string, state: ThreadState) => preamble.length + 1 + (countPinned([firstKey], new Set(state.pins)) > 0 ? first.length : 1)
 
 function stuckSizes(messages: Message[], headEnd: number, liveFrom: number, size: Estimator) {
   const of = (list: Message[]) => size.of(list) - size.fixed
   return { fixed: size.fixed, head: of(messages.slice(0, headEnd)), folded: of(messages.slice(headEnd, liveFrom)), live: of(messages.slice(liveFrom)) }
 }
 
-function cutNote(state: ThreadState, turns: Message[][], cutIndex: number, configuredKeep: number, actions: string[]) {
+function cutNote(state: ThreadState, turns: Message[][], keys: string[], cutIndex: number, configuredKeep: number, actions: string[]) {
   const pins = new Set(state.pins)
   const keptFrom = cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) : 0
-  const omitted = cutIndex > 0 ? keptFrom - 1 - countPinned(turns.slice(1, keptFrom), pins) : 0
+  const omitted = cutIndex > 0 ? keptFrom - 1 - countPinned(keys.slice(1, keptFrom), pins) : 0
   return {
     action: cutIndex > 0 ? ("compact" as const) : ("full" as const),
     compacted: actions.includes("cut") || actions.includes("roll"),
     actions: actions.length > 0 ? actions : undefined,
     cutTurn: cutIndex > 0 ? cutIndex : null,
     omitted,
-    folded: cutIndex > 0 ? cutIndex - keptFrom - countPinned(turns.slice(keptFrom, cutIndex), pins) + (foldsOpening(turns[0], keptFrom) && countPinned([turns[0]], pins) === 0 ? 1 : 0) : 0,
-    pinned: cutIndex > 0 ? countPinned(turns.slice(0, cutIndex), pins) : 0,
+    folded: cutIndex > 0 ? cutIndex - keptFrom - countPinned(keys.slice(keptFrom, cutIndex), pins) + (foldsOpening(turns[0], keptFrom) && countPinned([keys[0]], pins) === 0 ? 1 : 0) : 0,
+    pinned: cutIndex > 0 ? countPinned(keys.slice(0, cutIndex), pins) : 0,
     host: state.host,
     keep: state.keep,
     cleared: state.cleared,
@@ -134,7 +134,8 @@ function cutNote(state: ThreadState, turns: Message[][], cutIndex: number, confi
 export function compact({ body, config, state, window, guide, transcriptDir, mayCompact, omittedBefore = 0, decorate = (m) => m, reduce }: CompactInput): CompactResult {
   const { preamble, turns } = splitTurns(body.messages)
   const rolling = config.eval?.rolling ?? (config.mode === "default" ? { keep: config.keep, budget: config.budget } : undefined)
-  const resolved = resolveCut(turns, state, config, rolling?.keep)
+  const keys = turnKeys(turns)
+  const resolved = resolveCut(turns, keys, state, config, rolling?.keep)
   let cutIndex = resolved.cutIndex
   let stateChanged = resolved.stateChanged
 
@@ -170,7 +171,7 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
   const moveCut = (index: number, action: string) => {
     cutIndex = index
     resetCut(state)
-    state.cut = turnFingerprint(turns[index])
+    state.cut = keys[index]
     actions.push(action)
     rebuild()
   }
@@ -201,8 +202,8 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
     messages,
     stateChanged,
     note: {
-      ...cutNote(state, turns, cutIndex, configuredKeep, actions),
-      stuck: state.stuck === undefined ? undefined : stuckSizes(messages, headLength(preamble, turns[0], state), liveStart(messages), size),
+      ...cutNote(state, turns, keys, cutIndex, configuredKeep, actions),
+      stuck: state.stuck === undefined ? undefined : stuckSizes(messages, headLength(preamble, turns[0], keys[0], state), liveStart(messages), size),
       turns: turns.length,
       messagesIn: body.messages.length,
       messagesOut: messages.length,

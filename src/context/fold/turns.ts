@@ -37,6 +37,18 @@ export function turnFingerprint(turn: Message[]): string {
   return shortHash(JSON.stringify(blocks(turn[0]).map(withoutCacheControl)), 24)
 }
 
+export function turnKeys(turns: Message[][]): string[] {
+  const copies = new Map<string, number>()
+  return turns.map((turn) => {
+    const fingerprint = turnFingerprint(turn)
+    const earlier = copies.get(fingerprint) ?? 0
+    copies.set(fingerprint, earlier + 1)
+    return earlier === 0 ? fingerprint : `${fingerprint}~${earlier}`
+  })
+}
+
+export const fingerprintOfKey = (key: string) => key.split("~")[0]
+
 export function isHarness(message: Message) {
   return message.role === "system"
 }
