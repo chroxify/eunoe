@@ -1,7 +1,7 @@
 import type { Message } from "../context/content"
-import { splitTurns, turnFingerprint } from "../context/fold/turns"
+import { splitTurns, turnKeys } from "../context/fold/turns"
 import { threadKeyOf } from "./rewrite"
-import { resetCut, type ThreadState, type ThreadStore } from "./state"
+import { resetCut, retireRecalls, type ThreadState, type ThreadStore } from "./state"
 
 export interface FoldTarget {
   store: ThreadStore
@@ -23,7 +23,8 @@ export interface Folded {
 function located({ store, threadId, messages }: FoldTarget) {
   const threadKey = threadKeyOf(threadId, messages)
   if (!threadKey) throw new RangeError("eunoe can only fold a thread that has at least one user turn")
-  return { threadKey, turns: splitTurns(messages).turns, state: store.read(threadKey) }
+  const turns = splitTurns(messages).turns
+  return { threadKey, turns, keys: turnKeys(turns), state: store.read(threadKey) }
 }
 
 function checkedTurn(turn: number, turns: Message[][], from: number): number {
@@ -32,38 +33,39 @@ function checkedTurn(turn: number, turns: Message[][], from: number): number {
   return turn
 }
 
-function folded(threadKey: string, turns: Message[][], state: ThreadState): Folded {
-  const cutTurn = state.cut ? turns.findIndex((turn) => turnFingerprint(turn) === state.cut) : -1
+function folded(threadKey: string, keys: string[], state: ThreadState): Folded {
+  const cutTurn = state.cut ? keys.indexOf(state.cut) : -1
   const pins = new Set(state.pins)
-  return { threadKey, cutTurn: cutTurn > 0 ? cutTurn : null, pinned: turns.flatMap((turn, i) => (pins.has(turnFingerprint(turn)) ? [i] : [])) }
+  return { threadKey, cutTurn: cutTurn > 0 ? cutTurn : null, pinned: keys.flatMap((key, i) => (pins.has(key) ? [i] : [])) }
 }
 
-function withPins(state: ThreadState, turns: Message[][], indices: number[], pinned: boolean) {
+function withPins(state: ThreadState, turns: Message[][], keys: string[], indices: number[], pinned: boolean) {
   const pins = new Set(state.pins)
   for (const index of indices) {
-    const fingerprint = turnFingerprint(turns[checkedTurn(index, turns, 0)])
-    if (pinned) pins.add(fingerprint)
-    else pins.delete(fingerprint)
+    const key = keys[checkedTurn(index, turns, 0)]
+    if (pinned) pins.add(key)
+    else pins.delete(key)
   }
   if (pins.size > 0) state.pins = [...pins].sort()
   else delete state.pins
 }
 
 export function foldThread(target: FoldTarget, { at = "latest", pin = [] }: FoldOptions = {}): Folded {
-  const { threadKey, turns, state } = located(target)
+  const { threadKey, turns, keys, state } = located(target)
   const cut = checkedTurn(at === "latest" ? turns.length - 1 : at, turns, 1)
-  withPins(state, turns, pin, true)
+  withPins(state, turns, keys, pin, true)
   resetCut(state)
-  state.cut = turnFingerprint(turns[cut])
+  state.cut = keys[cut]
+  retireRecalls(state, turns.slice(0, cut))
   state.keep = cut - 1
   state.host = true
   target.store.save(threadKey, state)
-  return folded(threadKey, turns, state)
+  return folded(threadKey, keys, state)
 }
 
 export function pinTurns(target: FoldTarget, indices: number[], pinned = true): Folded {
-  const { threadKey, turns, state } = located(target)
-  withPins(state, turns, indices, pinned)
+  const { threadKey, turns, keys, state } = located(target)
+  withPins(state, turns, keys, indices, pinned)
   target.store.save(threadKey, state)
-  return folded(threadKey, turns, state)
+  return folded(threadKey, keys, state)
 }

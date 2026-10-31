@@ -67,9 +67,12 @@ const OVERFLOW_MARGIN = 1.1
 
 const charsOf = (sent: Body | number) => (typeof sent === "number" ? sent : sizeOf(sent))
 
-function overflowTokens(errorText: string): number | null {
-  const tokens = Number(errorText.match(/prompt is too long[^0-9]*(\d+)\s*tokens?\s*>\s*(\d+)/i)?.[1])
-  return Number.isFinite(tokens) && tokens > 0 ? tokens : null
+function overflowOf(errorText: string): { tokens: number; maximum: number | null } | null {
+  const match = errorText.match(/prompt is too long[^0-9]*(\d+)\s*tokens?\s*>\s*(\d+)/i)
+  const tokens = Number(match?.[1])
+  const maximum = Number(match?.[2])
+  if (!Number.isFinite(tokens) || tokens <= 0) return null
+  return { tokens, maximum: Number.isFinite(maximum) && maximum > 0 ? maximum : null }
 }
 
 export function recordUsage(store: ThreadStore, threadKey: string, sent: Body | number, usage: Usage): boolean {
@@ -82,12 +85,18 @@ export function recordUsage(store: ThreadStore, threadKey: string, sent: Body | 
   return true
 }
 
-export function recordOverflow(store: ThreadStore, threadKey: string, sent: Body | number, errorText: string): number | null {
-  const tokens = overflowTokens(errorText)
+export const limitKey = (model: unknown) => String(model ?? "")
+
+export function recordOverflow(store: ThreadStore, threadKey: string, sent: Body | number, errorText: string, model: unknown = typeof sent === "number" ? undefined : sent.model): number | null {
+  const overflow = overflowOf(errorText)
   const chars = charsOf(sent)
-  if (!tokens || chars <= 0) return null
+  if (!overflow || chars <= 0) return null
   const state = store.read(threadKey)
-  state.ratio = Math.max(state.ratio ?? 0, tokens / chars) * OVERFLOW_MARGIN
+  state.ratio = Math.max(state.ratio ?? 0, overflow.tokens / chars) * OVERFLOW_MARGIN
+  if (overflow.maximum) {
+    const key = limitKey(model)
+    state.limits = { ...state.limits, [key]: Math.min(state.limits?.[key] ?? Number.POSITIVE_INFINITY, overflow.maximum) }
+  }
   store.save(threadKey, state)
-  return tokens
+  return overflow.tokens
 }

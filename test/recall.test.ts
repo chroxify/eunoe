@@ -3,6 +3,7 @@ import type { Message } from "../src/context/content"
 import { salientLines, turnEvidence } from "../src/context/fold/evidence"
 import { trimMessages } from "../src/context/fold/strategies"
 import { type RecallChunk, rank, recallChunks, recallFor, terms, warmIndex, withRecall } from "../src/context/recall"
+import { CORE_DEFAULTS, rewrite as coreRewrite, foldThread, memoryStore, type ThreadStore, threadKeyOf } from "../src/core"
 import { rewrite } from "../src/proxy/rewrite"
 import { config, freshSession, reply, user } from "./fixtures"
 
@@ -125,5 +126,63 @@ describe("ranking a large corpus", () => {
     expect(slices).toBeGreaterThan(100)
     const query = terms("billing worker queue token")
     expect(rank(query, chunks)).toEqual(reference(query, chunks))
+  })
+})
+
+describe("recall across folds", () => {
+  const settings = { ...CORE_DEFAULTS, mode: "compact" as const }
+  const send = (store: ThreadStore, messages: Message[]) => coreRewrite({ body: { system: "s", tools: [{ name: "Bash" }], messages }, threadId: "t", config: settings, store, window: 1_000_000, mayCompact: true })
+  const failing = (tag: string, n: number) => Array.from({ length: n }, (_, i) => `${tag} step ${i}: ERR_${tag.toUpperCase()}_${i} failed in module ${tag}-${i} ${"detail ".repeat(20)}`).join("\n")
+  const blocksIn = (messages: Message[]) => messages.filter((m) => JSON.stringify(m).includes("<recalled-context>"))
+  const recalledChars = (messages: Message[]) => (JSON.stringify(messages).match(/<recalled-context>[\s\S]*?<\/recalled-context>/g) ?? []).reduce((sum, block) => sum + block.length, 0)
+
+  test("a folded prompt's recall is retired, so only the live prompt carries one", () => {
+    const store = memoryStore()
+    const tags = ["alpha", "bravo", "charlie", "delta"]
+    const messages: Message[] = [user("start"), reply("ok")]
+    for (const [i, tag] of tags.entries()) messages.push(user(`run ${tag}`), ...run(`r${i}`, `make ${tag}`, failing(tag, 40)), reply(`ran ${tag}`))
+    tags.forEach((tag, i) => {
+      messages.push(user(`why did ERR_${tag.toUpperCase()}_3 fail in ${tag}?`))
+      foldThread({ store, threadId: "t", messages })
+      const out = send(store, messages)
+      expect(blocksIn(out.body.messages)).toHaveLength(1)
+      expect(JSON.stringify(blocksIn(out.body.messages)[0])).toContain(`ERR_${tag.toUpperCase()}_3`)
+      expect(Object.values(store.read(threadKeyOf("t", messages) as string).recalls ?? {}).filter(Boolean)).toHaveLength(1)
+      messages.push(...run(`q${i}`, "ls", "ok"), reply(`answered ${tag}`))
+    })
+  })
+
+  test("the recall on the prompts still in context stays under the total", () => {
+    const store = memoryStore()
+    const tags = ["alpha", "bravo", "charlie", "delta"]
+    const messages: Message[] = [user("start"), reply("ok")]
+    for (const [i, tag] of tags.entries()) messages.push(user(`run ${tag}`), ...run(`r${i}`, `make ${tag}`, failing(tag, 400)), reply(`ran ${tag}`))
+    messages.push(user("now the questions"), reply("go ahead"))
+    foldThread({ store, threadId: "t", messages })
+    messages.push(...run("big", "cat notes.txt", "n".repeat(200_000)), reply("read the notes"))
+    const sizes: number[] = []
+    tags.forEach((tag, i) => {
+      messages.push(user(`list every ERR_${tag.toUpperCase()} failure in module ${tag} and every ${tag} step`))
+      const out = send(store, messages)
+      sizes.push(recalledChars(out.body.messages))
+      messages.push(...run(`q${i}`, "ls", "ok"), reply(`answered ${tag}`))
+    })
+    expect(sizes[0]).toBeGreaterThan(12_000)
+    expect(sizes[1]).toBeGreaterThan(sizes[0])
+    expect(sizes[2]).toBe(sizes[1])
+    expect(sizes[3]).toBe(sizes[1])
+    expect(sizes[3]).toBeLessThanOrEqual(32_000)
+  })
+
+  test("recall in a small context stays a quarter of it, so a fold always saves more than its recall adds", () => {
+    const store = memoryStore()
+    const messages: Message[] = [user("start"), reply("ok")]
+    for (const [i, tag] of ["alpha", "bravo"].entries()) messages.push(user(`run ${tag}`), ...run(`r${i}`, `make ${tag}`, failing(tag, 400)), reply(`ran ${tag}`))
+    messages.push(user("list every ERR_ALPHA failure in module alpha and every alpha step"))
+    foldThread({ store, threadId: "t", messages })
+    const out = send(store, messages)
+    const recalled = recalledChars(out.body.messages)
+    expect(recalled).toBeGreaterThan(3_000)
+    expect(recalled).toBeLessThanOrEqual(Math.max(6_000, 0.25 * JSON.stringify(out.body.messages).length) + 2_000)
   })
 })

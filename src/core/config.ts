@@ -1,7 +1,7 @@
 export type Mode = "off" | "compact" | "default"
 
 interface EvalConfig {
-  recallOptions?: { maxChars?: number; maxCharsMulti?: number; perQuery?: number }
+  recallOptions?: { maxChars?: number; maxCharsMulti?: number; maxCharsTotal?: number; perQuery?: number }
   strategy?: "tail" | "guide" | "trim"
   rolling?: { keep: number; budget: number }
   forceCut?: boolean

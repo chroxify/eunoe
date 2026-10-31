@@ -1,11 +1,11 @@
 import { type Body, type Message, quickHash } from "../context/content"
 import { type CompactOptions, capTurns, clearToolResults, compactMessages, countPinned, countToolResults, foldsOpening } from "../context/fold/strategies"
-import { type ReduceOptions, reduceTurn, splitTurns, turnFingerprint } from "../context/fold/turns"
+import { type ReduceOptions, reduceTurn, splitTurns, turnKeys } from "../context/fold/turns"
 import { clearedOutput } from "../context/prompts"
 import type { CoreConfig } from "./config"
 import { DEFAULT_RATIO, type Estimator, estimator, targetSize } from "./estimate"
 import type { RewriteNote } from "./rewrite"
-import { resetCut, type ThreadState } from "./state"
+import { resetCut, retireRecalls, type ThreadState } from "./state"
 
 export interface CompactInput {
   body: Body
@@ -51,16 +51,14 @@ interface Rolling {
 
 const PROTECTED_OUTPUTS = 5
 
-const STUCK_STEP = 0.1
-
 function settledCut(turns: Message[][], index: number) {
   let cut = index
   while (cut > 1 && JSON.stringify(turns[cut][0].content).includes("[Request interrupted")) cut -= 1
   return cut
 }
 
-function resolveCut(turns: Message[][], state: ThreadState, config: CoreConfig, rollingKeep: number | undefined) {
-  let cutIndex = state.cut ? turns.findIndex((turn) => turnFingerprint(turn) === state.cut) : -1
+function resolveCut(turns: Message[][], keys: string[], state: ThreadState, config: CoreConfig, rollingKeep: number | undefined) {
+  let cutIndex = state.cut ? keys.indexOf(state.cut) : -1
   let stateChanged = false
   if (state.cut && cutIndex === -1) {
     resetCut(state)
@@ -68,7 +66,8 @@ function resolveCut(turns: Message[][], state: ThreadState, config: CoreConfig, 
   }
   if (cutIndex <= 0 && config.eval?.forceCut && turns.length >= 3) {
     cutIndex = settledCut(turns, Math.max(1, turns.length - 1 - (rollingKeep ?? 1)))
-    state.cut = turnFingerprint(turns[cutIndex])
+    state.cut = keys[cutIndex]
+    retireRecalls(state, turns.slice(0, cutIndex))
     stateChanged = true
   }
   return { cutIndex, stateChanged }
@@ -92,39 +91,69 @@ function dueRoll(turns: Message[][], cutIndex: number, rolling: Rolling, size: E
   return next >= 1 && next > cutIndex && backlog > rolling.budget ? next : null
 }
 
-function shrinkToTarget(over: () => boolean, step: () => string, actions: string[], rebuild: () => void): boolean {
+function shrinkToTarget(over: () => boolean, step: () => string, actions: string[], rebuild: () => void) {
   while (over()) {
     const action = step()
     actions.push(action)
-    if (action === "stuck") return true
+    if (action === "stuck") return
     rebuild()
   }
-  return false
 }
 
-const holdsStuck = (state: ThreadState, estimate: number, window: number | null) => window !== null && state.stuck !== undefined && estimate <= state.stuck + STUCK_STEP * window
+interface Shrink {
+  estimate: () => number
+  step: () => string
+  rebuild: () => void
+  target: number
+  limit: number
+  window: number | null
+}
+
+function shrinkOrHold(state: ThreadState, actions: string[], shrink: Shrink) {
+  const overWindow = (tokens: number) => shrink.window !== null && tokens > shrink.window
+  const held = state.stuck === undefined ? null : { keep: state.keep, cleared: state.cleared, actions: actions.length, overWindow: overWindow(shrink.estimate()) }
+  shrinkToTarget(() => shrink.estimate() > shrink.target, shrink.step, actions, shrink.rebuild)
+  const helped = (estimate: number) => estimate <= shrink.limit || (held?.overWindow === true && !overWindow(estimate))
+  if (held && !helped(shrink.estimate())) {
+    restoreShrink(state, held)
+    actions.length = held.actions
+    shrink.rebuild()
+  }
+  if (shrink.estimate() > shrink.limit) state.stuck = shrink.estimate()
+  else {
+    delete state.stuck
+    if (actions.at(-1) === "stuck") actions.pop()
+  }
+}
+
+function restoreShrink(state: ThreadState, held: Pick<ThreadState, "keep" | "cleared">) {
+  if (held.keep === undefined) delete state.keep
+  else state.keep = held.keep
+  if (held.cleared === undefined) delete state.cleared
+  else state.cleared = held.cleared
+}
 
 export type StuckSizes = ReturnType<typeof stuckSizes>
 
-const headLength = (preamble: Message[], first: Message[], state: ThreadState) => preamble.length + 1 + (countPinned([first], new Set(state.pins)) > 0 ? first.length : 1)
+const headLength = (preamble: Message[], first: Message[], firstKey: string, state: ThreadState) => preamble.length + 1 + (countPinned([firstKey], new Set(state.pins)) > 0 ? first.length : 1)
 
 function stuckSizes(messages: Message[], headEnd: number, liveFrom: number, size: Estimator) {
   const of = (list: Message[]) => size.of(list) - size.fixed
   return { fixed: size.fixed, head: of(messages.slice(0, headEnd)), folded: of(messages.slice(headEnd, liveFrom)), live: of(messages.slice(liveFrom)) }
 }
 
-function cutNote(state: ThreadState, turns: Message[][], cutIndex: number, configuredKeep: number, actions: string[]) {
+function cutNote(state: ThreadState, turns: Message[][], keys: string[], cutIndex: number, configuredKeep: number, actions: string[]) {
   const pins = new Set(state.pins)
   const keptFrom = cutIndex > 0 ? Math.max(1, cutIndex - (state.keep ?? configuredKeep)) : 0
-  const omitted = cutIndex > 0 ? keptFrom - 1 - countPinned(turns.slice(1, keptFrom), pins) : 0
+  const omitted = cutIndex > 0 ? keptFrom - 1 - countPinned(keys.slice(1, keptFrom), pins) : 0
   return {
     action: cutIndex > 0 ? ("compact" as const) : ("full" as const),
     compacted: actions.includes("cut") || actions.includes("roll"),
     actions: actions.length > 0 ? actions : undefined,
     cutTurn: cutIndex > 0 ? cutIndex : null,
     omitted,
-    folded: cutIndex > 0 ? cutIndex - keptFrom - countPinned(turns.slice(keptFrom, cutIndex), pins) + (foldsOpening(turns[0], keptFrom) && countPinned([turns[0]], pins) === 0 ? 1 : 0) : 0,
-    pinned: cutIndex > 0 ? countPinned(turns.slice(0, cutIndex), pins) : 0,
+    folded: cutIndex > 0 ? cutIndex - keptFrom - countPinned(keys.slice(keptFrom, cutIndex), pins) + (foldsOpening(turns[0], keptFrom) && countPinned([keys[0]], pins) === 0 ? 1 : 0) : 0,
+    pinned: cutIndex > 0 ? countPinned(keys.slice(0, cutIndex), pins) : 0,
     host: state.host,
     keep: state.keep,
     cleared: state.cleared,
@@ -134,7 +163,8 @@ function cutNote(state: ThreadState, turns: Message[][], cutIndex: number, confi
 export function compact({ body, config, state, window, guide, transcriptDir, mayCompact, omittedBefore = 0, decorate = (m) => m, reduce }: CompactInput): CompactResult {
   const { preamble, turns } = splitTurns(body.messages)
   const rolling = config.eval?.rolling ?? (config.mode === "default" ? { keep: config.keep, budget: config.budget } : undefined)
-  const resolved = resolveCut(turns, state, config, rolling?.keep)
+  const keys = turnKeys(turns)
+  const resolved = resolveCut(turns, keys, state, config, rolling?.keep)
   let cutIndex = resolved.cutIndex
   let stateChanged = resolved.stateChanged
 
@@ -170,7 +200,8 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
   const moveCut = (index: number, action: string) => {
     cutIndex = index
     resetCut(state)
-    state.cut = turnFingerprint(turns[index])
+    state.cut = keys[index]
+    retireRecalls(state, turns.slice(0, index))
     actions.push(action)
     rebuild()
   }
@@ -184,16 +215,10 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
   if (mayCompact && estimate > limit) {
     const current = turns.length - 1
     if (current > 0 && current > cutIndex) moveCut(current, "cut")
-    if (!holdsStuck(state, estimate, window)) {
-      const stuck = shrinkToTarget(
-        () => estimate > target,
-        () => shrinkOnce(state, cutIndex, configuredKeep, liveResults),
-        actions,
-        rebuild,
-      )
-      if (stuck) state.stuck = estimate
-      else delete state.stuck
-    }
+    shrinkOrHold(state, actions, { estimate: () => estimate, step: () => shrinkOnce(state, cutIndex, configuredKeep, liveResults), rebuild, target, limit, window })
+    stateChanged = true
+  } else if (state.stuck !== undefined) {
+    delete state.stuck
     stateChanged = true
   }
 
@@ -201,8 +226,8 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
     messages,
     stateChanged,
     note: {
-      ...cutNote(state, turns, cutIndex, configuredKeep, actions),
-      stuck: state.stuck === undefined ? undefined : stuckSizes(messages, headLength(preamble, turns[0], state), liveStart(messages), size),
+      ...cutNote(state, turns, keys, cutIndex, configuredKeep, actions),
+      stuck: state.stuck === undefined ? undefined : stuckSizes(messages, headLength(preamble, turns[0], keys[0], state), liveStart(messages), size),
       turns: turns.length,
       messagesIn: body.messages.length,
       messagesOut: messages.length,

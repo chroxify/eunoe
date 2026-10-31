@@ -265,6 +265,47 @@ describe("the forwarder", () => {
     expect(records.map((r) => r.overflow ?? r.healed)).toEqual([250_000, 250_000])
   })
 
+  test("heals against the limit the error gives when it is below the window, and keeps it for later requests", async () => {
+    const limit = 50_000
+    const sizes: number[] = []
+    const server = Bun.serve({
+      port: 0,
+      maxRequestBodySize: 1 << 30,
+      async fetch(request) {
+        const text = await request.text()
+        sizes.push(text.length)
+        const tokens = Math.ceil(text.length / 3.6)
+        if (tokens > limit) return Response.json({ type: "error", error: { type: "invalid_request_error", message: `prompt is too long: ${tokens} tokens > ${limit} maximum` } }, { status: 400 })
+        return Response.json({ id: "m", usage: { input_tokens: tokens } })
+      },
+    })
+    const store = memoryStore()
+    const records: any[] = []
+    const forward = createForwarder({ store, upstream: `http://127.0.0.1:${server.port}`, window: 200_000, record: (entry) => records.push(entry) })
+    const messages = [0, 1, 2, 3].flatMap((i) => [user(`Prompt ${i}`), call(`t${i}`), result(`t${i}`, 50_000), reply("ok")])
+    const response = await post(forward, [...messages, user("go")])
+    await response.text()
+    const later = await post(forward, [...messages, user("go"), reply("done"), user("and again")])
+    await later.text()
+    server.stop(true)
+    expect(response.status).toBe(200)
+    expect(sizes).toHaveLength(3)
+    expect(sizes[1]).toBeLessThan(sizes[0] / 2)
+    expect(store.read(threadKeyOf("fw", messages) as string).limits).toEqual({ "claude-test": limit })
+    expect(later.status).toBe(200)
+    expect(records.at(-1)).toMatchObject({ status: 200, window: limit })
+  })
+
+  test("a limit learned on one model does not cap the thread once it switches model", () => {
+    const store = memoryStore()
+    const messages = session(4)
+    const key = threadKeyOf("t", messages) as string
+    recordOverflow(store, key, 100_000, "prompt is too long: 250000 tokens > 200000 maximum", "claude-haiku-4-5")
+    const on = (model: string) => rewrite(input(messages, { store, threadId: "t", window: 1_000_000, body: { ...body(messages), model } }))
+    expect(on("claude-haiku-4-5").note.window).toBe(200_000)
+    expect(on("claude-opus-5-5").note.window).toBe(1_000_000)
+  })
+
   test("answers 502 when the API is unreachable", async () => {
     const forward = createForwarder({ store: memoryStore(), upstream: "http://127.0.0.1:9", window: null })
     expect((await post(forward, session(2))).status).toBe(502)
@@ -282,8 +323,11 @@ describe("calibration", () => {
   test("recordOverflow raises the ratio past what the API counted", () => {
     const store = memoryStore()
     expect(recordOverflow(store, "k", 100_000, "prompt is too long: 40000 tokens > 30000 maximum")).toBe(40_000)
+    expect(store.read("k").limits).toEqual({ "": 30_000 })
     expect(store.read("k").ratio).toBeCloseTo(0.44, 6)
     expect(recordOverflow(store, "k", 100_000, "overloaded")).toBeNull()
+    recordOverflow(store, "k", { model: "claude-opus-5-5", messages: [] }, "prompt is too long: 40000 tokens > 35000 maximum")
+    expect(store.read("k").limits).toEqual({ "": 30_000, "claude-opus-5-5": 35_000 })
   })
 
   test("createWindowLookup asks the Models API once per model and remembers it", async () => {
@@ -303,6 +347,68 @@ describe("calibration", () => {
     server.stop(true)
     expect(asked).toBe(1)
     expect(learned).toEqual([1])
+  })
+
+  const modelsApi = (answer: () => Response | Promise<Response>) => {
+    let asked = 0
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 30,
+      fetch: () => {
+        asked += 1
+        return answer()
+      },
+    })
+    return { upstream: `http://127.0.0.1:${server.port}`, asked: () => asked, stop: () => server.stop(true) }
+  }
+
+  test("createWindowLookup falls back to the model family's window when the Models API refuses, and asks only once", async () => {
+    const api = modelsApi(() => Response.json({ type: "error", error: { type: "authentication_error" } }, { status: 401 }))
+    const lookup = createWindowLookup()
+    expect(await lookup("claude-opus-5-5", new Headers(), api.upstream)).toBe(1_000_000)
+    expect(await lookup("claude-opus-5-5", new Headers(), api.upstream)).toBe(1_000_000)
+    expect(await lookup("claude-haiku-4-5-20251001", new Headers(), api.upstream)).toBe(200_000)
+    expect(await lookup("claude-opus-4-8", new Headers(), api.upstream)).toBe(1_000_000)
+    expect(await lookup("claude-sonnet-4-6[1m]", new Headers(), api.upstream)).toBe(1_000_000)
+    expect(await lookup("gpt-5", new Headers(), api.upstream)).toBeNull()
+    api.stop()
+    expect(api.asked()).toBe(5)
+  })
+
+  test("createWindowLookup gives up on a hanging Models API after its timeout and does not wait again", async () => {
+    const api = modelsApi(async () => {
+      await Bun.sleep(2_000)
+      return Response.json({ max_input_tokens: 1 })
+    })
+    const lookup = createWindowLookup({ timeoutMs: 50 })
+    const began = Date.now()
+    expect(await lookup("claude-sonnet-4-6", new Headers(), api.upstream)).toBe(200_000)
+    expect(await lookup("claude-sonnet-4-6", new Headers(), api.upstream)).toBe(200_000)
+    expect(Date.now() - began).toBeLessThan(1_000)
+    api.stop()
+    expect(api.asked()).toBe(1)
+  })
+
+  test("createWindowLookup gives each caller of a shared lookup its own fallback", async () => {
+    const api = modelsApi(async () => {
+      await Bun.sleep(20)
+      return new Response("no", { status: 401 })
+    })
+    const lookup = createWindowLookup()
+    const [plain, long] = await Promise.all([lookup("claude-sonnet-4-6", new Headers(), api.upstream), lookup("claude-sonnet-4-6[1m]", new Headers(), api.upstream)])
+    api.stop()
+    expect([plain, long]).toEqual([200_000, 1_000_000])
+    expect(api.asked()).toBe(1)
+  })
+
+  test("createWindowLookup asks again once the failure is old enough", async () => {
+    let refuse = true
+    const api = modelsApi(() => (refuse ? new Response("no", { status: 503 }) : Response.json({ max_input_tokens: 400_000 })))
+    const lookup = createWindowLookup({ retryAfterMs: 0 })
+    expect(await lookup("claude-opus-5-5", new Headers(), api.upstream)).toBe(1_000_000)
+    refuse = false
+    expect(await lookup("claude-opus-5-5", new Headers(), api.upstream)).toBe(400_000)
+    api.stop()
   })
 })
 
