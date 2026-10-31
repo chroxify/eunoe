@@ -108,10 +108,10 @@ What happened, for logs and for the host to act on:
 | `host` | `true` when the current cut is one the host set with `foldThread` |
 | `keep`, `cleared` | after shrinking: folded turns kept, tool results cleared in the live turn |
 | `estimate`, `window` | tokens this request is estimated at, against the window |
-| `fit`, `fitEstimate` | when the first pass was still over the limit: `"recut"`, `"bare"` (recall left out), `"over"` |
+| `fit`, `fitEstimate` | when the first pass was still over the limit: `"recut"`, `"bare"` (the live prompt's recall left out, for good), `"over"` |
 | `recalled` | characters of recall attached to this prompt (first time only) |
 | `handoff`, `handoffFrom` | size and label of attached handoffs |
-| `stuck` | a `StuckSizes`, when even the cut can't get under target |
+| `stuck` | a `StuckSizes`, while even the cut leaves the request over `compactAt × window` |
 
 ### `StuckSizes`
 
@@ -119,8 +119,9 @@ What happened, for logs and for the host to act on:
 the first message and notice, the folded turns, and the live turn. When
 `live` dominates, a single turn is bigger than the window allows; start a
 new thread with a handoff, or fold at your own boundary. While stuck, the
-cleared set holds still until the request grows by a tenth of the window,
-so the cache keeps hitting.
+cleared set holds still; eunoe clears again only when that makes the
+request fit or brings it back under the window, so the cache keeps hitting.
+`stuck` goes away once a request fits.
 
 ## Configuration
 
@@ -180,8 +181,11 @@ const durableObject: ThreadStore = {
 ### `ThreadState`
 
 The JSON a store holds per thread. Treat it as opaque. It contains the cut
-fingerprint, `keep`, `cleared`, `stuck`, `host`, `pins`, `ratio`, `recalls`
-(the recall text per prompt) and `handoffs`. It is small: fingerprints and
+turn's key, `keep`, `cleared`, `stuck`, `host`, `pins`, `ratio`, `limit` (the
+input limit a "prompt is too long" error named, which caps the window for
+the thread), `recalls` (the recall text per prompt still in context) and
+`handoffs`. A turn's key is its prompt's fingerprint, with `~n` added for
+the nth repeat of the same prompt. It is small: fingerprints and
 the recalled text, never the conversation.
 
 ### `memoryStore(initial?: Record<string, ThreadState>): ThreadStore`
@@ -319,7 +323,8 @@ to that prompt, with its tool output added to recall.
 The proxy's whole request loop as a fetch handler. For each request it
 rewrites `/v1/messages`, forwards everything to the API and streams the
 answer back. It learns the thread's token ratio from the answer's `usage`
-and retries once with a corrected size after "prompt is too long". It
+and retries once after "prompt is too long", built against the limit the
+error names. It
 retries a `count_tokens` call that times out (three tries), and answers 502
 when the API can't be reached.
 
@@ -373,7 +378,9 @@ if (threadKey) recordUsage(store, threadKey, body, answer.usage)
 ### `recordOverflow(store, threadKey, sent: Body | number, errorText: string): number | null`
 
 After a "prompt is too long: N tokens > M" error, raises the ratio past
-what the API counted and returns `N`; rewrite and send again. `null` for
+what the API counted, saves `M` as the thread's `limit` and returns `N`;
+rewrite and send again, and every later rewrite of the thread uses the
+smaller of its window and `M`. `null` for
 any other error.
 
 ### `inputTokens(usage: Usage): number`
@@ -391,11 +398,15 @@ once the usage appears.
 
 ## Context windows
 
-### `createWindowLookup(options?: { known?: Map<string, number>; onLearn?: (windows: Map<string, number>) => void }): WindowLookup`
+### `createWindowLookup(options?: { known?: Map<string, number>; onLearn?: (windows: Map<string, number>) => void; timeoutMs?: number; retryAfterMs?: number }): WindowLookup`
 
 Looks a model's context window up from the Models API (`max_input_tokens`)
-once and remembers it. `[1m]`-style suffixes are ignored. `onLearn` lets you
-persist the map.
+once and remembers it. `[1m]`-style suffixes are ignored for the lookup.
+`onLearn` lets you persist the map. When the lookup fails or takes longer
+than `timeoutMs` (1,500), it answers with the model family's window: 1M for
+Claude 5 models and `[1m]` ids, 200K for other Claude models, `null` for
+anything else. It does not ask again for that model until `retryAfterMs`
+(ten minutes) has passed.
 
 ### `WindowLookup`
 

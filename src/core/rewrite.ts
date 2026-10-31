@@ -165,7 +165,15 @@ function carried(from: Rewrite, to: Rewrite): Rewrite {
   return { ...to, note: { ...to.note, compacted: Boolean(to.note.compacted || from.note.compacted), actions } }
 }
 
-export function rewrite(input: RewriteInput, before?: Rewrite): Rewrite {
+function withLearnedLimit(input: RewriteInput): RewriteInput {
+  const threadKey = input.threadId && Array.isArray(input.body.messages) ? threadKeyOf(input.threadId, input.body.messages) : null
+  const limit = threadKey ? input.store.read(threadKey).limit : undefined
+  if (!limit || (input.window !== null && input.window <= limit)) return input
+  return { ...input, window: limit }
+}
+
+export function rewrite(given: RewriteInput, before?: Rewrite): Rewrite {
+  const input = withLearnedLimit(given)
   const result = before ? carried(before, once(input)) : once(input)
   if (!overLimit(input, result)) return result
   const recut = carried(result, once(input))
@@ -175,13 +183,15 @@ export function rewrite(input: RewriteInput, before?: Rewrite): Rewrite {
   return { ...bare, note: { ...bare.note, fit: overLimit(input, bare) ? "over" : "bare", fitEstimate: sentEstimate(input, bare) } }
 }
 
-export async function prefetchRecall(input: RewriteInput, rerank: Reranker): Promise<{ reranked: boolean; rerankError: null; recalled: number } | null> {
+export async function prefetchRecall(given: RewriteInput, rerank: Reranker): Promise<{ reranked: boolean; rerankError: null; recalled: number } | null> {
+  const input = withLearnedLimit(given)
   if (!wantsRecall(input)) return null
   const recalled = await prefetchFor(input, strategize(input), rerank)
   return recalled === null ? null : { reranked: rerank !== identityReranker, rerankError: null, recalled }
 }
 
-export async function rewriteAsync(input: RewriteInput, rerank: Reranker = identityReranker): Promise<Rewrite> {
+export async function rewriteAsync(given: RewriteInput, rerank: Reranker = identityReranker): Promise<Rewrite> {
+  const input = withLearnedLimit(given)
   if (!wantsRecall(input) || rerank === identityReranker) return rewrite(input)
   const first = strategize(input)
   const recalled = await prefetchFor(input, first, rerank)

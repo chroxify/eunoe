@@ -17,6 +17,7 @@ export interface ThreadState {
   host?: boolean
   pins?: string[]
   ratio?: number
+  limit?: number
   recalls?: Record<string, string>
 }
 
