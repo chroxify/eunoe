@@ -5,7 +5,7 @@ import { clearedOutput } from "../context/prompts"
 import type { CoreConfig } from "./config"
 import { DEFAULT_RATIO, type Estimator, estimator, targetSize } from "./estimate"
 import type { RewriteNote } from "./rewrite"
-import { resetCut, type ThreadState } from "./state"
+import { resetCut, retireRecalls, type ThreadState } from "./state"
 
 export interface CompactInput {
   body: Body
@@ -69,6 +69,7 @@ function resolveCut(turns: Message[][], keys: string[], state: ThreadState, conf
   if (cutIndex <= 0 && config.eval?.forceCut && turns.length >= 3) {
     cutIndex = settledCut(turns, Math.max(1, turns.length - 1 - (rollingKeep ?? 1)))
     state.cut = keys[cutIndex]
+    retireRecalls(state, turns.slice(0, cutIndex))
     stateChanged = true
   }
   return { cutIndex, stateChanged }
@@ -172,6 +173,7 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
     cutIndex = index
     resetCut(state)
     state.cut = keys[index]
+    retireRecalls(state, turns.slice(0, index))
     actions.push(action)
     rebuild()
   }

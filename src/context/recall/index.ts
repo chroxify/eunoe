@@ -17,6 +17,8 @@ export interface RecallOptions {
   minTerms?: number
   maxChars?: number
   maxCharsMulti?: number
+  maxCharsTotal?: number
+  charsInUse?: number
   narrative?: boolean
   callWeight?: number
   salientExcerpt?: boolean
@@ -388,7 +390,8 @@ export async function pickRecallWith(prompt: string, chunks: RecallChunk[], rera
 
 export function renderRecall(prompt: string, chunks: RecallChunk[], picks: RecallPick[], options: RecallOptions = {}): string | null {
   if (picks.length === 0) return null
-  const budget = queriesOf(prompt).length > 1 ? (options.maxCharsMulti ?? 30_000) : (options.maxChars ?? 18_000)
+  const own = queriesOf(prompt).length > 1 ? (options.maxCharsMulti ?? 30_000) : (options.maxChars ?? 18_000)
+  const budget = Math.min(own, (options.maxCharsTotal ?? 30_000) - (options.charsInUse ?? 0))
   const entries: string[] = []
   let used = 0
   for (const { index, query } of [...picks].sort((a, b) => chunks[a.index].turn - chunks[b.index].turn || a.index - b.index)) {

@@ -1,3 +1,7 @@
+import type { Message } from "../context/content"
+import { isPrompt } from "../context/fold/turns"
+import { messageFingerprint } from "./fingerprint"
+
 export interface Handoff {
   label: string
   source: string
@@ -29,6 +33,11 @@ export function memoryStore(initial: Record<string, ThreadState> = {}): ThreadSt
       threads.set(key, structuredClone(state))
     },
   }
+}
+
+export function retireRecalls(state: ThreadState, folded: Message[][]) {
+  if (!state.recalls) return
+  for (const message of folded.flat()) if (isPrompt(message)) delete state.recalls[messageFingerprint(message)]
 }
 
 export function resetCut(state: ThreadState) {

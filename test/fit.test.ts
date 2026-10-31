@@ -64,4 +64,20 @@ describe("what is sent always fits", () => {
     expect(sent(out.body)).toBeLessThanOrEqual(LIMIT)
     expect(JSON.stringify(out.body)).not.toContain("<recalled-context>")
   })
+
+  test("once recall is left out to fit, it stays out for that prompt even when it would fit again", () => {
+    const sessionId = freshSession()
+    const messages: Message[] = [user("first"), reply("ok")]
+    for (let n = 1; n <= 6; n += 1) messages.push(user(`task ${n}`), call(`a${n}`), result(`a${n}`, 400), reply(`answer ${n}`))
+    const live = user("the live one")
+    messages.push(live, call("z"), result("z", 400))
+    const thread = threadOf(sessionId, messages)
+    saveState(thread, { recalls: { [messageFingerprint(live)]: recallOf(400_000) } })
+    const send = (window: number, extra: Message[] = []) => rewrite({ body: body([...messages, ...extra]), sessionId, config: config({ mode: "default" }), transcript: null, window, mayCompact: true })
+    expect(send(WINDOW).note.fit).toBe("bare")
+    expect(readState(thread).recalls?.[messageFingerprint(live)]).toBe("")
+    const roomier = send(4 * WINDOW, [call("y"), result("y", 400)])
+    expect(roomier.note.fit).toBeUndefined()
+    expect(JSON.stringify(roomier.body)).not.toContain("<recalled-context>")
+  })
 })

@@ -8,7 +8,7 @@ import type { CoreConfig } from "./config"
 import { DEFAULT_RATIO, estimator, sizeOf, targetSize } from "./estimate"
 import { messageFingerprint } from "./fingerprint"
 import { activeHandoffs, attachHandoffs, withHandoffs } from "./handoff"
-import { activeRecalls, applyRecall, prefetchFor, wantsRecall } from "./recall"
+import { activeRecalls, applyRecall, dropLiveRecall, prefetchFor, wantsRecall } from "./recall"
 import type { ThreadStore } from "./state"
 
 export interface ThreadSources {
@@ -119,7 +119,7 @@ function strategize(input: RewriteInput): Rewrite {
   const based = isAgentThread(body) ? { ...body, system: withSystemPrompt(body.system) } : body
   if (body.messages.length < 2) return { body: based, threadKey, note: { action: "full", turns: turns.length } }
   const handoffs = activeHandoffs(state.handoffs)
-  const recalls = wantsRecall(input) ? activeRecalls(state.recalls) : {}
+  const recalling = wantsRecall(input)
   const result = compact({
     body: based,
     config,
@@ -129,7 +129,7 @@ function strategize(input: RewriteInput): Rewrite {
     transcriptDir: sources.transcriptDir ?? null,
     mayCompact: input.mayCompact && !off,
     omittedBefore: input.omittedBefore,
-    decorate: (messages) => withRecall(withHandoffs(messages, handoffs), messageFingerprint, recalls),
+    decorate: (messages) => withRecall(withHandoffs(messages, handoffs), messageFingerprint, recalling ? activeRecalls(state.recalls) : {}),
   })
   if (result.stateChanged) store.save(threadKey, state)
   return { body: result.messages === body.messages ? based : { ...based, messages: result.messages }, threadKey, note: result.note }
@@ -170,7 +170,8 @@ export function rewrite(input: RewriteInput, before?: Rewrite): Rewrite {
   if (!overLimit(input, result)) return result
   const recut = carried(result, once(input))
   if (!overLimit(input, recut)) return { ...recut, note: { ...recut.note, fit: "recut" } }
-  const bare = carried(recut, once({ ...input, config: { ...input.config, eval: { ...input.config.eval, recall: false } } }))
+  if (recut.threadKey && wantsRecall(input)) dropLiveRecall(input, recut.threadKey)
+  const bare = carried(recut, once(input))
   return { ...bare, note: { ...bare.note, fit: overLimit(input, bare) ? "over" : "bare", fitEstimate: sentEstimate(input, bare) } }
 }
 

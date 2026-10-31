@@ -1,7 +1,7 @@
 import type { Message } from "../context/content"
 import { splitTurns, turnKeys } from "../context/fold/turns"
 import { threadKeyOf } from "./rewrite"
-import { resetCut, type ThreadState, type ThreadStore } from "./state"
+import { resetCut, retireRecalls, type ThreadState, type ThreadStore } from "./state"
 
 export interface FoldTarget {
   store: ThreadStore
@@ -56,6 +56,7 @@ export function foldThread(target: FoldTarget, { at = "latest", pin = [] }: Fold
   withPins(state, turns, keys, pin, true)
   resetCut(state)
   state.cut = keys[cut]
+  retireRecalls(state, turns.slice(0, cut))
   state.keep = cut - 1
   state.host = true
   target.store.save(threadKey, state)
