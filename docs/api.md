@@ -181,9 +181,9 @@ const durableObject: ThreadStore = {
 ### `ThreadState`
 
 The JSON a store holds per thread. Treat it as opaque. It contains the cut
-turn's key, `keep`, `cleared`, `stuck`, `host`, `pins`, `ratio`, `limit` (the
-input limit a "prompt is too long" error named, which caps the window for
-the thread), `recalls` (the recall text per prompt still in context) and
+turn's key, `keep`, `cleared`, `stuck`, `host`, `pins`, `ratio`, `limits` (per
+model, the input limit a "prompt is too long" error named, which caps the
+window for that model in the thread), `recalls` (the recall text per prompt still in context) and
 `handoffs`. A turn's key is its prompt's fingerprint, with `~n` added for
 the nth repeat of the same prompt. It is small: fingerprints and
 the recalled text, never the conversation.
@@ -375,12 +375,13 @@ const answer = await anthropic.messages.create(body)
 if (threadKey) recordUsage(store, threadKey, body, answer.usage)
 ```
 
-### `recordOverflow(store, threadKey, sent: Body | number, errorText: string): number | null`
+### `recordOverflow(store, threadKey, sent: Body | number, errorText: string, model?: unknown): number | null`
 
 After a "prompt is too long: N tokens > M" error, raises the ratio past
-what the API counted, saves `M` as the thread's `limit` and returns `N`;
-rewrite and send again, and every later rewrite of the thread uses the
-smaller of its window and `M`. `null` for
+what the API counted, saves `M` as the thread's limit for `model` (taken
+from `sent` when it is a body) and returns `N`; rewrite and send again, and
+every later rewrite of the thread on that model uses the smaller of its
+window and `M`. `null` for
 any other error.
 
 ### `inputTokens(usage: Usage): number`
@@ -404,8 +405,8 @@ Looks a model's context window up from the Models API (`max_input_tokens`)
 once and remembers it. `[1m]`-style suffixes are ignored for the lookup.
 `onLearn` lets you persist the map. When the lookup fails or takes longer
 than `timeoutMs` (1,500), it answers with the model family's window: 1M for
-Claude 5 models and `[1m]` ids, 200K for other Claude models, `null` for
-anything else. It does not ask again for that model until `retryAfterMs`
+Claude 5 models, `claude-opus-4-8` and `[1m]` ids, 200K for other Claude
+models, `null` for anything else. It does not ask again for that model until `retryAfterMs`
 (ten minutes) has passed.
 
 ### `WindowLookup`

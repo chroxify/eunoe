@@ -32,6 +32,8 @@ export interface RecallPick {
 
 export type Reranker = (query: string, chunks: RecallChunk[], candidates: number[]) => Promise<number[]>
 
+export const RECALL_CHARS_TOTAL = 30_000
+
 const SHOWN_LINES = 8
 const BM25_K1 = 1.2
 const BM25_B = 0.75
@@ -391,7 +393,7 @@ export async function pickRecallWith(prompt: string, chunks: RecallChunk[], rera
 export function renderRecall(prompt: string, chunks: RecallChunk[], picks: RecallPick[], options: RecallOptions = {}): string | null {
   if (picks.length === 0) return null
   const own = queriesOf(prompt).length > 1 ? (options.maxCharsMulti ?? 30_000) : (options.maxChars ?? 18_000)
-  const budget = Math.min(own, (options.maxCharsTotal ?? 30_000) - (options.charsInUse ?? 0))
+  const budget = Math.min(own, (options.maxCharsTotal ?? RECALL_CHARS_TOTAL) - (options.charsInUse ?? 0))
   const entries: string[] = []
   let used = 0
   for (const { index, query } of [...picks].sort((a, b) => chunks[a.index].turn - chunks[b.index].turn || a.index - b.index)) {

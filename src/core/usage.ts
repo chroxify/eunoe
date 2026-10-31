@@ -85,13 +85,18 @@ export function recordUsage(store: ThreadStore, threadKey: string, sent: Body | 
   return true
 }
 
-export function recordOverflow(store: ThreadStore, threadKey: string, sent: Body | number, errorText: string): number | null {
+export const limitKey = (model: unknown) => String(model ?? "")
+
+export function recordOverflow(store: ThreadStore, threadKey: string, sent: Body | number, errorText: string, model: unknown = typeof sent === "number" ? undefined : sent.model): number | null {
   const overflow = overflowOf(errorText)
   const chars = charsOf(sent)
   if (!overflow || chars <= 0) return null
   const state = store.read(threadKey)
   state.ratio = Math.max(state.ratio ?? 0, overflow.tokens / chars) * OVERFLOW_MARGIN
-  if (overflow.maximum) state.limit = Math.min(state.limit ?? Number.POSITIVE_INFINITY, overflow.maximum)
+  if (overflow.maximum) {
+    const key = limitKey(model)
+    state.limits = { ...state.limits, [key]: Math.min(state.limits?.[key] ?? Number.POSITIVE_INFINITY, overflow.maximum) }
+  }
   store.save(threadKey, state)
   return overflow.tokens
 }

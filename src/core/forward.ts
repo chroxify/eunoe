@@ -26,6 +26,7 @@ export interface ForwarderOptions {
 
 interface Outgoing {
   note: ForwardNote
+  model: unknown
   threadKey: string | null
   bodyText: string | undefined
   sentSize: number
@@ -71,7 +72,7 @@ function defaultPrepare(options: ForwarderOptions, upstream: string): NonNullabl
   }
 }
 
-const passthrough = (bodyText: string | undefined): Outgoing => ({ note: { action: "pass" }, threadKey: null, bodyText, sentSize: 0, givenSize: 0, fixedSize: 0 })
+const passthrough = (bodyText: string | undefined): Outgoing => ({ note: { action: "pass" }, model: undefined, threadKey: null, bodyText, sentSize: 0, givenSize: 0, fixedSize: 0 })
 
 async function outgoing(prepare: NonNullable<ForwarderOptions["prepare"]>, request: Request, givenText: string, mayCompact: boolean): Promise<Outgoing> {
   try {
@@ -80,6 +81,7 @@ async function outgoing(prepare: NonNullable<ForwarderOptions["prepare"]>, reque
     const sentSize = sizeOf(result.body)
     return {
       note: result.note,
+      model: given.model,
       threadKey: result.threadKey,
       bodyText: result.body !== given ? JSON.stringify(result.body, wellFormed) : givenText,
       sentSize,
@@ -161,7 +163,7 @@ export function createForwarder(options: ForwarderOptions): (request: Request) =
     if (answer.status >= 400 && out.note.action !== "pass") {
       const errorText = await answer.text()
       const logged = { path: url.pathname, status: answer.status, thread: out.threadKey, ...out.note }
-      const overflow = out.threadKey && !isCountTokens ? recordOverflow(options.store, out.threadKey, out.sentSize, errorText) : null
+      const overflow = out.threadKey && !isCountTokens ? recordOverflow(options.store, out.threadKey, out.sentSize, errorText, out.model) : null
       if (!overflow) {
         log({ ...logged, error: clipped(errorText) })
         return errorResponse(errorText)

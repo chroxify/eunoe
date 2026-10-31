@@ -28,7 +28,7 @@ function lookupHeaders(requestHeaders: Headers): Headers {
 function familyWindow(model: string): number | null {
   if (LONG_SUFFIX.test(model)) return 1_000_000
   const id = model.replace(SUFFIX, "")
-  if (/^claude-(?:opus|sonnet|haiku|fable)-5/.test(id)) return 1_000_000
+  if (/^claude-(?:(?:opus|sonnet|haiku|fable)-5|opus-4-8)/.test(id)) return 1_000_000
   if (id.startsWith("claude-")) return 200_000
   return null
 }
@@ -54,17 +54,16 @@ export function createWindowLookup({ known = new Map<string, number>(), onLearn,
     const fallback = familyWindow(given)
     const failed = failedAt.get(id)
     if (failed !== undefined && Date.now() - failed < retryAfterMs) return Promise.resolve(fallback)
-    const inFlight = lookups.get(id)
-    if (inFlight) return inFlight
-    const pending = lookup(id, requestHeaders, upstream)
-      .catch(() => null)
-      .then((found) => {
-        if (found !== null) return found
-        failedAt.set(id, Date.now())
-        return fallback
-      })
-      .finally(() => lookups.delete(id))
+    const pending =
+      lookups.get(id) ??
+      lookup(id, requestHeaders, upstream)
+        .catch(() => null)
+        .then((found) => {
+          if (found === null) failedAt.set(id, Date.now())
+          return found
+        })
+        .finally(() => lookups.delete(id))
     lookups.set(id, pending)
-    return pending
+    return pending.then((found) => found ?? fallback)
   }
 }

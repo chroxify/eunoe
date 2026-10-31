@@ -245,7 +245,8 @@ method and model that was tested. Without a key the BM25 order is used and
 nothing else changes. The recall is computed once per message and pinned to
 it, so it never disturbs the cache. Once that message is folded its recall is
 dropped with it, and the recall on the messages still in context stays under
-30K characters in total, so it never crowds out the conversation itself.
+30K characters in total and under a quarter of the context (with a 6K floor),
+so it never crowds out the conversation itself.
 
 ## How it plugs in
 
@@ -520,7 +521,7 @@ brings it back under the window, so the cache keeps hitting.
 rewrites each `/v1/messages` request, forwards everything to the API,
 streams the answer back, learns the thread's real token ratio from the
 answer's `usage`, retries once after a "prompt is too long" against the
-limit the error names (and keeps that limit for the thread), retries a
+limit the error names (and keeps that limit for the thread and model), retries a
 stalled `count_tokens`, and looks the context window up from the Models API. `eunoe serve` is this call with a file-backed
 store, Claude Code's session files as sources and a request log.
 
@@ -592,10 +593,10 @@ at each step and keeps its plan pinned, and a
   narrows this gap without closing it.
 - **The window can be a guess.** The context window size comes from the
   Models API for each model. When that lookup fails or takes over 1.5 s,
-  eunoe assumes the model family's window (1M for Claude 5 models and
-  `[1m]` ids, 200K for other Claude models) and asks again ten minutes
-  later. A guess that is too big is caught by the "prompt is too long"
-  retry, which then keeps the real limit for the thread.
+  eunoe assumes the model family's window (1M for Claude 5 models, Opus
+  4.8 and `[1m]` ids, 200K for other Claude models) and asks again ten
+  minutes later. A guess that is too big is caught by the "prompt is too
+  long" retry, which then keeps the real limit for that thread and model.
 
 ## Credits
 

@@ -159,6 +159,7 @@ describe("recall across folds", () => {
     for (const [i, tag] of tags.entries()) messages.push(user(`run ${tag}`), ...run(`r${i}`, `make ${tag}`, failing(tag, 400)), reply(`ran ${tag}`))
     messages.push(user("now the questions"), reply("go ahead"))
     foldThread({ store, threadId: "t", messages })
+    messages.push(...run("big", "cat notes.txt", "n".repeat(200_000)), reply("read the notes"))
     const sizes: number[] = []
     tags.forEach((tag, i) => {
       messages.push(user(`list every ERR_${tag.toUpperCase()} failure in module ${tag} and every ${tag} step`))
@@ -171,5 +172,17 @@ describe("recall across folds", () => {
     expect(sizes[2]).toBe(sizes[1])
     expect(sizes[3]).toBe(sizes[1])
     expect(sizes[3]).toBeLessThanOrEqual(32_000)
+  })
+
+  test("recall in a small context stays a quarter of it, so a fold always saves more than its recall adds", () => {
+    const store = memoryStore()
+    const messages: Message[] = [user("start"), reply("ok")]
+    for (const [i, tag] of ["alpha", "bravo"].entries()) messages.push(user(`run ${tag}`), ...run(`r${i}`, `make ${tag}`, failing(tag, 400)), reply(`ran ${tag}`))
+    messages.push(user("list every ERR_ALPHA failure in module alpha and every alpha step"))
+    foldThread({ store, threadId: "t", messages })
+    const out = send(store, messages)
+    const recalled = recalledChars(out.body.messages)
+    expect(recalled).toBeGreaterThan(3_000)
+    expect(recalled).toBeLessThanOrEqual(Math.max(6_000, 0.25 * JSON.stringify(out.body.messages).length) + 2_000)
   })
 })

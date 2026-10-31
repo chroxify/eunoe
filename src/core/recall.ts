@@ -1,6 +1,6 @@
 import { type Body, blocks, type Message, resultText } from "../context/content"
 import { isPrompt } from "../context/fold/turns"
-import { livePrompt, type RecallChunk, type RecallOptions, type Reranker, recallChunks, recallFor, recallForWith, withRecall } from "../context/recall"
+import { livePrompt, RECALL_CHARS_TOTAL, type RecallChunk, type RecallOptions, type Reranker, recallChunks, recallFor, recallForWith, withRecall } from "../context/recall"
 import { messageFingerprint } from "./fingerprint"
 import { activeHandoffs, handoffChunks } from "./handoff"
 import type { Rewrite, RewriteInput } from "./rewrite"
@@ -32,7 +32,15 @@ function charsInUse(messages: Message[], recalls: Record<string, string>): numbe
   return messages.reduce((sum, message) => sum + (isPrompt(message) ? (recalls[messageFingerprint(message)]?.length ?? 0) : 0), 0)
 }
 
-const withinTotal = (input: RewriteInput, result: Rewrite, recalls: Record<string, string>): RecallOptions => ({ ...input.config.eval?.recallOptions, charsInUse: charsInUse(result.body.messages, recalls) })
+const RECALL_SHARE = 0.25
+
+const RECALL_FLOOR = 6_000
+
+function withinTotal(input: RewriteInput, result: Rewrite, recalls: Record<string, string>): RecallOptions {
+  const options = input.config.eval?.recallOptions
+  const share = Math.max(RECALL_FLOOR, RECALL_SHARE * JSON.stringify(result.body.messages).length)
+  return { ...options, maxCharsTotal: Math.min(options?.maxCharsTotal ?? RECALL_CHARS_TOTAL, share), charsInUse: charsInUse(result.body.messages, recalls) }
+}
 
 export function dropLiveRecall(input: RewriteInput, threadKey: string) {
   const target = recallTarget(input.body)

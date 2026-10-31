@@ -10,6 +10,7 @@ import { messageFingerprint } from "./fingerprint"
 import { activeHandoffs, attachHandoffs, withHandoffs } from "./handoff"
 import { activeRecalls, applyRecall, dropLiveRecall, prefetchFor, wantsRecall } from "./recall"
 import type { ThreadStore } from "./state"
+import { limitKey } from "./usage"
 
 export interface ThreadSources {
   guide?: string | null
@@ -167,7 +168,7 @@ function carried(from: Rewrite, to: Rewrite): Rewrite {
 
 function withLearnedLimit(input: RewriteInput): RewriteInput {
   const threadKey = input.threadId && Array.isArray(input.body.messages) ? threadKeyOf(input.threadId, input.body.messages) : null
-  const limit = threadKey ? input.store.read(threadKey).limit : undefined
+  const limit = threadKey ? input.store.read(threadKey).limits?.[limitKey(input.body.model)] : undefined
   if (!limit || (input.window !== null && input.window <= limit)) return input
   return { ...input, window: limit }
 }
