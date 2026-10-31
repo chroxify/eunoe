@@ -31,7 +31,7 @@ for (let n = 1; n <= 12; n += 1) {
   )
 }
 const asking = [...messages, user("which deployment id did service 3 print?")]
-const call = (path, body) => worker.dispatchFetch(`http://thread${path}`, { method: "POST", headers: { "x-thread-id": "do-thread" }, body: JSON.stringify(body) })
+const call = (path, body, thread = "do-thread") => worker.dispatchFetch(`http://thread${path}`, { method: "POST", headers: { "x-thread-id": thread }, body: JSON.stringify(body) })
 
 try {
   const answer = await call("/v1/messages", { model: "claude-sonnet-5-5", tools: [{ name: "Bash" }], messages: asking })
@@ -48,11 +48,15 @@ try {
   assert.ok(saved.cut && saved.recalls && saved.ratio > 0, "cut, recall and the learned token ratio are in Durable Object storage")
 
   const planned = [user("plan the release"), reply("PLAN-DO: tag, then publish"), user("tag it"), reply("Tagged."), user("publish it")]
-  const folded = await (await call("/fold", { threadId: "planned", messages: planned, pin: [0] })).json()
+  const folded = await (await call("/fold", { messages: planned, pin: [0] }, "planned")).json()
   assert.deepEqual(folded.pinned, [0])
   assert.equal(folded.cutTurn, 2)
+  await (await call("/v1/messages", { model: "claude-sonnet-5-5", tools: [{ name: "Bash" }], messages: planned }, "planned")).text()
+  const afterFold = JSON.stringify(received.at(-1).messages)
+  assert.match(afterFold, /<context-compacted>/, "the fold was saved in the planned thread's own Durable Object, so its next request is folded")
+  assert.match(afterFold, /PLAN-DO: tag, then publish/, "the pinned plan is sent whole")
 
-  const transcript = await (await call("/transcript", { threadId: "do-thread", messages })).json()
+  const transcript = await (await call("/transcript", { messages })).json()
   assert.ok(transcript.files.includes("turn-0004.md") && transcript.files.includes("index.md"))
 
   process.stdout.write(`eunoe core runs in workerd: ${asking.length} → ${sent.messages.length} messages, recall and state in a Durable Object, ${transcript.files.length} transcript files\n`)
