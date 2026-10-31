@@ -12,8 +12,8 @@ src/cli/          The `eunoe` / `ee` command
   proxy/            installing, probing and reporting on the running proxy
   replay/           replaying a session history through the proxy offline
   logo/             the terminal logo
-src/core/         The embeddable library: rewrite, compaction, recall, handoffs, host folds, token estimates; state and sources through interfaces, exported from index.ts
-src/proxy/        The HTTP proxy: request handling, the file-backed thread store and session sources, model windows, request log
+src/core/         The embeddable library: rewrite, compaction, recall, handoffs, host folds, token estimates, the forwarder and calibration; state and sources through interfaces, exported from index.ts
+src/proxy/        The HTTP proxy: the core's forwarder with Claude Code's session files as sources, the file-backed thread store, model-window cache, request log
 src/context/      Pure message transforms over API bodies
   content.ts        the API payload types and the shared primitives: blocks, text, clipping, hashing
   prompts.ts        every piece of text the model reads: system prompt, notices, handoff, recall and evidence wrappers, transcript guide
@@ -23,7 +23,7 @@ src/transcript/   Reading Claude Code session files and rendering them to markdo
 src/config/       ~/.eunoe/config.json: defaults, validation, per-session overrides; paths.ts for everything under ~/.eunoe
 src/version.ts    The package version
 test/             bun test, one file per area, fixtures.ts builds message histories
-examples/         Hosts that embed the core: a forwarding server, an agent loop, a Claude Code proxy
+examples/         tour.ts runs every core feature; hosts that embed it: a forwarding server, an agent loop, a Claude Code proxy
 bench/            The benchmark: arms, suites, component evals and the published results (bench/README.md)
 scripts/          Repo tooling (the conventions linter)
 ```

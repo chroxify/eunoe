@@ -511,12 +511,54 @@ boundary. While a thread is stuck, eunoe holds what it cleared still
 instead of clearing a little more on every request, so the cache keeps
 hitting.
 
-[`examples/`](examples) has three hosts that run as they are: a
+### The whole proxy as one call
+
+`createForwarder` is the proxy's request loop as a fetch handler: it
+rewrites each `/v1/messages` request, forwards everything to the API,
+streams the answer back, learns the thread's real token ratio from the
+answer's `usage`, retries once with a corrected size after a "prompt is
+too long", retries a stalled `count_tokens`, and looks the context window
+up from the Models API. `eunoe serve` is this call with a file-backed
+store, Claude Code's session files as sources and a request log.
+
+```ts
+import { CORE_DEFAULTS, createForwarder, memoryStore } from "@chroxify/eunoe"
+
+const forward = createForwarder({ store: memoryStore(), config: CORE_DEFAULTS })
+Bun.serve({ port: 8787, fetch: forward })          // or Deno.serve, a Worker's fetch, …
+```
+
+Threads are told apart by an `x-thread-id` header, or Claude Code's own
+session id; pass `threadIdOf`, `sources`, `reranker`, `window` or `record`
+to change any part, or `prepare` to take the rewrite over entirely. A host
+that calls the API itself gets the same calibration with
+`recordUsage(store, threadKey, sentBody, usage)` and
+`recordOverflow(store, threadKey, sentBody, errorText)`.
+
+| export | |
+|---|---|
+| `rewrite`, `rewriteAsync` | rewrite one request for one thread; the async one takes a reranker |
+| `foldThread`, `pinTurns` | fold at your own boundary, keep chosen turns whole |
+| `createForwarder` | the full proxy loop as a `(Request) => Promise<Response>` |
+| `recordUsage`, `recordOverflow` | feed what the API said back into the thread's estimates |
+| `createWindowLookup` | a model's context window from the Models API, cached |
+| `memoryStore`, `threadKeyOf` | in-memory state, and the key a thread is saved under |
+| `jevReranker`, `continueToken`, `watchUsage`, `claudeCodeSessionId` | the pieces the proxy uses, for hosts that want them |
+
+What stays in the proxy is what only makes sense next to Claude Code on
+your machine: reading its session files and subagent runs, finding earlier
+sessions for `{ee:continue:…}`, rendering the markdown transcript, the
+config file and the CLI.
+
+[`examples/`](examples) runs as it is. [`tour.ts`](examples/tour.ts) walks
+through every feature on real inputs and prints what each did: folding,
+the full cut, evidence, recall, recall from host history, reranking,
+handoffs, host folds and pins, `stuck`, calibration, custom storage and the
+forwarder. The others are hosts: a
 [forwarding server](examples/forwarding-server.ts) on `node:http` with a
 `/fold` endpoint, a [custom agent loop](examples/agent-loop.ts) that folds
 at each step and keeps its plan pinned, and a
-[Claude Code proxy](examples/proxy.ts) with a file-backed store, which is
-what `eunoe serve` does with more around it.
+[Claude Code proxy](examples/proxy.ts) with a file-backed store.
 
 ## What it doesn't do
 

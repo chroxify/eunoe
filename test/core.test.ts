@@ -4,7 +4,7 @@ import { paths } from "../src/config/paths"
 import { sha256 } from "../src/context/content"
 import { capTurns, compactMessages } from "../src/context/fold/strategies"
 import { turnFingerprint } from "../src/context/fold/turns"
-import { CORE_DEFAULTS, foldThread, type Message, memoryStore, pinTurns, type RewriteInput, rewrite, rewriteAsync, threadKeyOf } from "../src/core"
+import { CORE_DEFAULTS, createForwarder, createWindowLookup, foldThread, type Message, memoryStore, pinTurns, type RewriteInput, recordOverflow, recordUsage, rewrite, rewriteAsync, threadKeyOf } from "../src/core"
 import { call, reply, result, session, turn, user } from "./fixtures"
 
 const body = (messages: Message[]) => ({ system: "s", tools: [{ name: "Bash" }], messages })
@@ -194,5 +194,97 @@ describe("host folds", () => {
     const capped = sent(capTurns(messages, { keepTurns: 0, guide: null, capChars: 1_000, pinned }))
     expect(capped).toContain("step a1")
     expect(capped).not.toContain("step a2")
+  })
+})
+
+describe("the forwarder", () => {
+  const usage = { input_tokens: 3, cache_read_input_tokens: 9_000, cache_creation_input_tokens: 1_000 }
+  const sse = `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { usage } })}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n`
+  const fakeApi = (answers: Array<(body: any) => Response>) => {
+    const received: any[] = []
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const url = new URL(request.url)
+        if (url.pathname.startsWith("/v1/models/")) return Response.json({ max_input_tokens: 100_000 })
+        const sentBody = await request.json()
+        received.push(sentBody)
+        return (answers[received.length - 1] ?? answers.at(-1) ?? (() => new Response(sse)))(sentBody)
+      },
+    })
+    return { received, upstream: `http://127.0.0.1:${server.port}`, stop: () => server.stop(true) }
+  }
+  const post = (forward: (request: Request) => Promise<Response>, messages: Message[]) =>
+    forward(new Request("http://eunoe.local/v1/messages", { method: "POST", headers: { "x-thread-id": "fw" }, body: JSON.stringify({ ...body(messages), model: "claude-test" }) }))
+
+  test("rewrites, forwards, streams the answer back and learns the token ratio from its usage", async () => {
+    const api = fakeApi([() => new Response(sse, { headers: { "content-type": "text/event-stream" } })])
+    const store = memoryStore()
+    const records: any[] = []
+    const forward = createForwarder({ store, upstream: api.upstream, config: tight, record: (entry) => records.push(entry) })
+    const messages = session(20, 3_000)
+    const response = await post(forward, messages)
+    expect(await response.text()).toContain("message_start")
+    await Bun.sleep(20)
+    api.stop()
+    expect(api.received[0].messages.length).toBeLessThan(messages.length)
+    expect(records[0]).toMatchObject({ action: "compact", status: 200, input: 10_003, window: 100_000 })
+    expect(store.read(threadKeyOf("fw", messages) as string).ratio).toBeCloseTo(10_003 / records[0].charsOut, 6)
+  })
+
+  test("heals a prompt-too-long by learning the real size and retrying once", async () => {
+    const tooLong = () => Response.json({ type: "error", error: { type: "invalid_request_error", message: "prompt is too long: 250000 tokens > 200000 maximum" } }, { status: 400 })
+    const api = fakeApi([tooLong, () => new Response(sse)])
+    const store = memoryStore()
+    const records: any[] = []
+    const forward = createForwarder({ store, upstream: api.upstream, window: 200_000, record: (entry) => records.push(entry) })
+    const response = await post(forward, session(30, 20_000))
+    await response.text()
+    await Bun.sleep(20)
+    api.stop()
+    expect(response.status).toBe(200)
+    expect(api.received).toHaveLength(2)
+    expect(api.received[1].messages.length).toBeLessThan(api.received[0].messages.length)
+    expect(records.map((r) => r.overflow ?? r.healed)).toEqual([250_000, 250_000])
+  })
+
+  test("answers 502 when the API is unreachable", async () => {
+    const forward = createForwarder({ store: memoryStore(), upstream: "http://127.0.0.1:9", window: null })
+    expect((await post(forward, session(2))).status).toBe(502)
+  })
+})
+
+describe("calibration", () => {
+  test("recordUsage keeps the ratio of real input tokens to characters sent", () => {
+    const store = memoryStore()
+    expect(recordUsage(store, "k", 1_000, { input_tokens: 10, cache_read_input_tokens: 290 })).toBe(true)
+    expect(store.read("k").ratio).toBe(0.3)
+    expect(recordUsage(store, "k", 1_000, {})).toBe(false)
+  })
+
+  test("recordOverflow raises the ratio past what the API counted", () => {
+    const store = memoryStore()
+    expect(recordOverflow(store, "k", 100_000, "prompt is too long: 40000 tokens > 30000 maximum")).toBe(40_000)
+    expect(store.read("k").ratio).toBeCloseTo(0.44, 6)
+    expect(recordOverflow(store, "k", 100_000, "overloaded")).toBeNull()
+  })
+
+  test("createWindowLookup asks the Models API once per model and remembers it", async () => {
+    let asked = 0
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => {
+        asked += 1
+        return Response.json({ max_input_tokens: 1_000_000 })
+      },
+    })
+    const learned: number[] = []
+    const lookup = createWindowLookup({ onLearn: (windows) => learned.push(windows.size) })
+    const upstream = `http://127.0.0.1:${server.port}`
+    expect(await lookup("claude-opus-5-5[1m]", new Headers(), upstream)).toBe(1_000_000)
+    expect(await lookup("claude-opus-5-5", new Headers(), upstream)).toBe(1_000_000)
+    server.stop(true)
+    expect(asked).toBe(1)
+    expect(learned).toEqual([1])
   })
 })
