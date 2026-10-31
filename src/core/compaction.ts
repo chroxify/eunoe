@@ -51,8 +51,6 @@ interface Rolling {
 
 const PROTECTED_OUTPUTS = 5
 
-const STUCK_STEP = 0.1
-
 function settledCut(turns: Message[][], index: number) {
   let cut = index
   while (cut > 1 && JSON.stringify(turns[cut][0].content).includes("[Request interrupted")) cut -= 1
@@ -93,17 +91,47 @@ function dueRoll(turns: Message[][], cutIndex: number, rolling: Rolling, size: E
   return next >= 1 && next > cutIndex && backlog > rolling.budget ? next : null
 }
 
-function shrinkToTarget(over: () => boolean, step: () => string, actions: string[], rebuild: () => void): boolean {
+function shrinkToTarget(over: () => boolean, step: () => string, actions: string[], rebuild: () => void) {
   while (over()) {
     const action = step()
     actions.push(action)
-    if (action === "stuck") return true
+    if (action === "stuck") return
     rebuild()
   }
-  return false
 }
 
-const holdsStuck = (state: ThreadState, estimate: number, window: number | null) => window !== null && state.stuck !== undefined && estimate <= state.stuck + STUCK_STEP * window
+interface Shrink {
+  estimate: () => number
+  step: () => string
+  rebuild: () => void
+  target: number
+  limit: number
+  window: number | null
+}
+
+function shrinkOrHold(state: ThreadState, actions: string[], shrink: Shrink) {
+  const overWindow = (tokens: number) => shrink.window !== null && tokens > shrink.window
+  const held = state.stuck === undefined ? null : { keep: state.keep, cleared: state.cleared, actions: actions.length, overWindow: overWindow(shrink.estimate()) }
+  shrinkToTarget(() => shrink.estimate() > shrink.target, shrink.step, actions, shrink.rebuild)
+  const helped = (estimate: number) => estimate <= shrink.limit || (held?.overWindow === true && !overWindow(estimate))
+  if (held && !helped(shrink.estimate())) {
+    restoreShrink(state, held)
+    actions.length = held.actions
+    shrink.rebuild()
+  }
+  if (shrink.estimate() > shrink.limit) state.stuck = shrink.estimate()
+  else {
+    delete state.stuck
+    if (actions.at(-1) === "stuck") actions.pop()
+  }
+}
+
+function restoreShrink(state: ThreadState, held: Pick<ThreadState, "keep" | "cleared">) {
+  if (held.keep === undefined) delete state.keep
+  else state.keep = held.keep
+  if (held.cleared === undefined) delete state.cleared
+  else state.cleared = held.cleared
+}
 
 export type StuckSizes = ReturnType<typeof stuckSizes>
 
@@ -187,16 +215,10 @@ export function compact({ body, config, state, window, guide, transcriptDir, may
   if (mayCompact && estimate > limit) {
     const current = turns.length - 1
     if (current > 0 && current > cutIndex) moveCut(current, "cut")
-    if (!holdsStuck(state, estimate, window)) {
-      const stuck = shrinkToTarget(
-        () => estimate > target,
-        () => shrinkOnce(state, cutIndex, configuredKeep, liveResults),
-        actions,
-        rebuild,
-      )
-      if (stuck) state.stuck = estimate
-      else delete state.stuck
-    }
+    shrinkOrHold(state, actions, { estimate: () => estimate, step: () => shrinkOnce(state, cutIndex, configuredKeep, liveResults), rebuild, target, limit, window })
+    stateChanged = true
+  } else if (state.stuck !== undefined) {
+    delete state.stuck
     stateChanged = true
   }
 
