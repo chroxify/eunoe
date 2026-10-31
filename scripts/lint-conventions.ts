@@ -27,6 +27,7 @@ const BANNED_VERB_ALLOWLIST = new Set<string>()
 const ALLOWED_COMMENT_PATTERN = /^\s*(biome-ignore|@ts-|#region|#endregion)/
 const GRAB_BAG_FILE = /(^|\/)(constants|types)\.ts$/
 const PORTABLE_ROOTS = ["src/core", "src/context"]
+const PORTABLE_FILES = ["src/transcript/parse.ts", "src/transcript/format.ts"]
 const HOST_ONLY_IMPORT = /^(node:|bun$|bun:)/
 const HOST_ONLY_MODULES = ["src/proxy", "src/cli", "src/transcript", "src/config"]
 const HOST_ONLY_GLOBALS = new Set(["Bun", "process"])
@@ -96,6 +97,7 @@ function hostOnlySource(file: string, source: string): boolean {
   if (HOST_ONLY_IMPORT.test(source)) return true
   if (!source.startsWith(".")) return false
   const target = relative(process.cwd(), resolve(dirname(file), source))
+  if (PORTABLE_FILES.includes(`${target}.ts`)) return false
   return HOST_ONLY_MODULES.some((root) => target === root || target.startsWith(`${root}/`))
 }
 
@@ -131,7 +133,7 @@ function run() {
       }
       collectCommentViolations(file, parsed.comments ?? [], violations)
       if (VERB_CHECK_ROOTS.some((verbRoot) => file.startsWith(verbRoot))) collectVerbViolations(file, parsed.program, violations)
-      if (PORTABLE_ROOTS.some((portableRoot) => file.startsWith(`${portableRoot}/`))) collectPortabilityViolations(file, parsed.program, violations)
+      if (PORTABLE_FILES.includes(file) || PORTABLE_ROOTS.some((portableRoot) => file.startsWith(`${portableRoot}/`))) collectPortabilityViolations(file, parsed.program, violations)
       collectGrabBagViolations(file, violations)
     }
   }

@@ -24,6 +24,7 @@ src/config/       ~/.eunoe/config.json: defaults, validation, per-session overri
 src/version.ts    The package version
 test/             bun test, one file per area, fixtures.ts builds message histories
 examples/         tour.ts runs every core feature; hosts that embed it: a forwarding server, an agent loop, a Claude Code proxy
+docs/api.md       The library's API reference: every export, its signature and an example
 bench/            The benchmark: arms, suites, component evals and the published results (bench/README.md)
 scripts/          Repo tooling (the conventions linter)
 ```

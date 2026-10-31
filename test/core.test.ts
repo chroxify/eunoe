@@ -4,7 +4,23 @@ import { paths } from "../src/config/paths"
 import { sha256 } from "../src/context/content"
 import { capTurns, compactMessages } from "../src/context/fold/strategies"
 import { turnFingerprint } from "../src/context/fold/turns"
-import { CORE_DEFAULTS, createForwarder, createWindowLookup, foldThread, type Message, memoryStore, pinTurns, type RewriteInput, recordOverflow, recordUsage, rewrite, rewriteAsync, threadKeyOf } from "../src/core"
+import {
+  CORE_DEFAULTS,
+  createForwarder,
+  createWindowLookup,
+  foldThread,
+  type Message,
+  memoryStore,
+  pinTurns,
+  type RewriteInput,
+  recordOverflow,
+  recordUsage,
+  renderTranscriptFiles,
+  rewrite,
+  rewriteAsync,
+  threadKeyOf,
+  transcriptGuide,
+} from "../src/core"
 import { call, reply, result, session, turn, user } from "./fixtures"
 
 const body = (messages: Message[]) => ({ system: "s", tools: [{ name: "Bash" }], messages })
@@ -286,5 +302,33 @@ describe("calibration", () => {
     server.stop(true)
     expect(asked).toBe(1)
     expect(learned).toEqual([1])
+  })
+})
+
+describe("transcripts from the host's own messages", () => {
+  const messages: Message[] = [
+    user("deploy staging"),
+    call("d", { command: "bun run deploy" }),
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "d", content: "Deployment ID: dpl_transcript1" }] },
+    { role: "user", content: "[Image: original 2560x1440, displayed at 2000x1125. Multiply coordinates by 1.28 to map to original image.]" },
+    reply("Deployed."),
+    user("now tag it"),
+    reply("Tagged."),
+  ]
+
+  test("renders one file per turn and an index, ready to store anywhere", () => {
+    const files = renderTranscriptFiles(messages)
+    expect(Object.keys(files).sort()).toEqual(["index.md", "turn-0001.md", "turn-0002.md"])
+    expect(files["turn-0001.md"]).toContain("Deployment ID: dpl_transcript1")
+    expect(files["turn-0001.md"]).toContain("bun run deploy")
+    expect(files["index.md"]).toContain("deploy staging")
+    expect(Object.keys(renderTranscriptFiles(messages, "xml"))).toContain("turn-0001.xml")
+  })
+
+  test("the guide points the agent at where the host stored them", () => {
+    const guide = transcriptGuide("/data/threads/t1/transcript")
+    expect(guide).toContain("/data/threads/t1/transcript")
+    const out = rewrite(input(session(20, 3_000), { config: tight, sources: { guide, transcriptDir: "/data/threads/t1/transcript" } }))
+    expect(sent(out.body.messages)).toContain("/data/threads/t1/transcript")
   })
 })

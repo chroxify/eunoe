@@ -543,6 +543,7 @@ that calls the API itself gets the same calibration with
 | `recordUsage`, `recordOverflow` | feed what the API said back into the thread's estimates |
 | `createWindowLookup` | a model's context window from the Models API, cached |
 | `memoryStore`, `threadKeyOf` | in-memory state, and the key a thread is saved under |
+| `renderTranscriptFiles`, `transcriptGuide` | the searchable per-turn transcript from your own messages, and the text that points the agent at it |
 | `jevReranker`, `continueToken`, `watchUsage`, `claudeCodeSessionId` | the pieces the proxy uses, for hosts that want them |
 
 What stays in the proxy is what only makes sense next to Claude Code on
@@ -550,11 +551,13 @@ your machine: reading its session files and subagent runs, finding earlier
 sessions for `{ee:continue:…}`, rendering the markdown transcript, the
 config file and the CLI.
 
-[`examples/`](examples) runs as it is. [`tour.ts`](examples/tour.ts) walks
+Every export, with its signature, what it does and an example, is in
+[`docs/api.md`](docs/api.md), which starts with where each kind of state and
+data lives. [`examples/`](examples) runs as it is. [`tour.ts`](examples/tour.ts) walks
 through every feature on real inputs and prints what each did: folding,
 the full cut, evidence, recall, recall from host history, reranking,
-handoffs, host folds and pins, `stuck`, calibration, custom storage and the
-forwarder. The others are hosts: a
+handoffs, host folds and pins, `stuck`, calibration, custom storage, the
+forwarder and transcripts. The others are hosts: a
 [forwarding server](examples/forwarding-server.ts) on `node:http` with a
 `/fold` endpoint, a [custom agent loop](examples/agent-loop.ts) that folds
 at each step and keeps its plan pinned, and a

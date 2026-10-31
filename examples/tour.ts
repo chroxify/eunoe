@@ -13,11 +13,13 @@ import {
   pinTurns,
   type Reranker,
   recordUsage,
+  renderTranscriptFiles,
   rewrite,
   rewriteAsync,
   type ThreadState,
   type ThreadStore,
   threadKeyOf,
+  transcriptGuide,
 } from "@chroxify/eunoe"
 
 const user = (text: string): Message => ({ role: "user", content: [{ type: "text", text }] })
@@ -160,3 +162,22 @@ const answered = (await answer.json()) as { received: number }
 upstream.close()
 assert.ok(answered.received < live.length)
 show("13. createForwarder: the whole proxy loop as one fetch handler", { sent: live.length, upstreamReceived: answered.received, plus: "ratio learning from usage, one retry on prompt-too-long, count_tokens retries" })
+
+const transcriptFiles = renderTranscriptFiles(live)
+const stored = new Map(Object.entries(transcriptFiles).map(([name, body]) => [`threads/tour/transcript/${name}`, body]))
+const guided = rewrite({
+  body: request(live),
+  threadId: "transcribed",
+  config: { ...CORE_DEFAULTS, mode: "compact" },
+  store: memoryStore(),
+  sources: { guide: transcriptGuide("threads/tour/transcript"), transcriptDir: "threads/tour/transcript" },
+  window: 15_000,
+  mayCompact: true,
+})
+assert.ok(stored.get("threads/tour/transcript/turn-0014.md")?.includes("dpl_tour7k2q9"))
+assert.ok(wire(guided.body.messages).includes("threads/tour/transcript"))
+show("14. Transcript: render your own messages to per-turn files, store them anywhere, point the agent at them", {
+  files: `${stored.size} (index.md + one per turn)`,
+  deployTurn: "threads/tour/transcript/turn-0014.md has the full deploy output",
+  guide: "transcriptGuide(dir) goes into sources.guide; the cut's notice tells the agent to grep there",
+})
