@@ -8,6 +8,7 @@ import {
   continueToken,
   createForwarder,
   foldThread,
+  listSubagentRecall,
   type Message,
   memoryStore,
   pinTurns,
@@ -180,4 +181,21 @@ show("14. Transcript: render your own messages to per-turn files, store them any
   files: `${stored.size} (index.md + one per turn)`,
   deployTurn: "threads/tour/transcript/turn-0014.md has the full deploy output",
   guide: "transcriptGuide(dir) goes into sources.guide; the cut's notice tells the agent to grep there",
+})
+
+const launched: Message[] = [
+  user("why is CI red?"),
+  { role: "assistant", content: [{ type: "tool_use", id: "agent1", name: "Agent", input: { description: "find the flaky test", prompt: "find it" } }] },
+  { role: "user", content: [{ type: "tool_result", tool_use_id: "agent1", content: "It is the retry test." }] },
+  reply("The retry test is flaky."),
+  user("which seed made the retry test fail?"),
+]
+const subagents = [{ description: "find the flaky test", toolUseId: "agent1", messages: [user("find it"), ...bash("s1", "bun test --seed 4242", "FAIL retry.test.ts with seed 4242"), reply("It is the retry test.")] }]
+const withSubagent = rewrite({ body: request(launched), threadId: "subagents", config: CORE_DEFAULTS, store: memoryStore(), sources: { listSubagentChunks: () => listSubagentRecall(launched, subagents) }, window: null, mayCompact: true })
+const subagentFiles = renderTranscriptFiles(launched, { subagents })
+assert.ok(wire(withSubagent.body.messages).includes("seed 4242"))
+assert.ok(subagentFiles["turn-0001-subagent-1.md"]?.includes("seed 4242"))
+show("15. Subagents: what only a subagent saw comes back through recall and gets its own transcript file", {
+  recalled: withSubagent.note.recalled,
+  file: "turn-0001-subagent-1.md, linked from the Agent call in turn-0001.md",
 })

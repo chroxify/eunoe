@@ -8,6 +8,7 @@ export { claudeCodeSessionId, createForwarder, type ForwarderOptions, type Forwa
 export { continueToken } from "./handoff"
 export { type Rewrite, type RewriteInput, type RewriteNote, rewrite, rewriteAsync, type ThreadSources, threadKeyOf } from "./rewrite"
 export { memoryStore, type ThreadState, type ThreadStore } from "./state"
-export { renderTranscriptFiles, transcriptGuide } from "./transcript"
+export { listSubagentRecall, type Subagent } from "./subagents"
+export { renderTranscriptFiles, type TranscriptOptions, transcriptGuide } from "./transcript"
 export { inputTokens, recordOverflow, recordUsage, type Usage, watchUsage } from "./usage"
 export { createWindowLookup, type WindowLookup } from "./window"

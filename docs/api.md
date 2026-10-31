@@ -17,7 +17,8 @@ import { CORE_DEFAULTS, createForwarder, foldThread, memoryStore, rewrite } from
 - [Sources](#sources): `ThreadSources`
 - [Recall](#recall): `Reranker`, `RecallChunk`, `jevReranker`
 - [Host folds](#host-folds): `foldThread`, `pinTurns`, `FoldTarget`, `FoldOptions`, `Folded`
-- [Transcripts](#transcripts): `renderTranscriptFiles`, `transcriptGuide`
+- [Transcripts](#transcripts): `renderTranscriptFiles`, `TranscriptOptions`, `transcriptGuide`
+- [Subagents](#subagents): `listSubagentRecall`, `Subagent`
 - [Handoffs](#handoffs): `continueToken`
 - [The forwarder](#the-forwarder): `createForwarder`, `ForwarderOptions`, `Prepared`, `ForwardNote`, `claudeCodeSessionId`
 - [Calibration and usage](#calibration-and-usage): `recordUsage`, `recordOverflow`, `inputTokens`, `watchUsage`, `Usage`
@@ -37,6 +38,7 @@ the environment. Everything it keeps or reads goes through the host:
 | The full conversation, when you send a shortened one | you | `sources.readHistory` |
 | The searchable transcript the agent greps | you, anywhere | write the files from [`renderTranscriptFiles`](#transcripts), then pass `sources.guide` and `sources.transcriptDir` |
 | Earlier sessions for `{ee:continue:…}` | you | `sources.findHandoff` / `sources.readHandoff` |
+| What subagents saw and printed | you | [`listSubagentRecall`](#subagents) into `sources.listSubagentChunks`, and `subagents` in `renderTranscriptFiles` |
 | Context window per model | in memory, or wherever `onLearn` writes | [`createWindowLookup`](#context-windows) |
 
 So recall needs no setup at all. The transcript is optional and lives where
@@ -256,12 +258,18 @@ them). Pins outlive later cuts.
 
 ## Transcripts
 
-### `renderTranscriptFiles(messages: Message[], format?: "markdown" | "xml"): Record<string, string>`
+### `renderTranscriptFiles(messages: Message[], options?: TranscriptOptions): Record<string, string>`
 
 Renders your own messages into the same files the proxy writes to
-`~/.eunoe/transcripts/<session>/`: `index.md` and one `turn-NNNN.md` per
-turn with every tool call and its full output. Store them anywhere the
-agent can read: a folder, a sandbox, R2.
+`~/.eunoe/transcripts/<session>/`: `index.md`, and one `turn-NNNN.md` per
+turn with every tool call and its full output. Each subagent run also gets
+a `turn-NNNN-subagent-K.md`, linked from the call that launched it. Store
+the files anywhere the agent can read: a folder, a sandbox, R2, Durable
+Object storage.
+
+### `TranscriptOptions`
+
+`{ format?: "markdown" | "xml"; subagents?: Subagent[] }`. Markdown is the default.
 
 ### `transcriptGuide(dir: string, format?: "markdown" | "xml"): string`
 
@@ -272,6 +280,28 @@ search them. Pass the text as `sources.guide` and `dir` as `sources.transcriptDi
 const dir = `/workspace/.transcripts/${threadId}`
 for (const [name, text] of Object.entries(renderTranscriptFiles(messages))) await writeFile(`${dir}/${name}`, text)
 rewrite({ ...input, sources: { guide: transcriptGuide(dir), transcriptDir: dir } })
+```
+
+## Subagents
+
+The proxy reads Claude Code's subagent runs from disk. A host that runs its
+own subagents passes their messages in instead.
+
+### `Subagent`
+
+`{ description: string; messages: Message[]; toolUseId?: string }`. `toolUseId`
+is the id of the tool call that launched the run in the parent thread; it
+ties the run to its turn.
+
+### `listSubagentRecall(parentMessages: Message[], subagents: Subagent[]): RecallChunk[]`
+
+What the subagents' tools printed, as recall material labelled
+`subagent "<description>"`. A value only a subagent saw then comes back when
+the parent is asked about it.
+
+```ts
+rewrite({ ...input, sources: { listSubagentChunks: () => listSubagentRecall(messages, subagents) } })
+renderTranscriptFiles(messages, { subagents })
 ```
 
 ## Handoffs
@@ -371,6 +401,16 @@ persist the map.
 
 `(model: unknown, requestHeaders: Headers, upstream?: string) => Promise<number | null>`.
 The request's auth headers are reused for the lookup.
+
+## Hosts
+
+- [`examples/durable-object.ts`](../examples/durable-object.ts): a Cloudflare Worker whose
+  Durable Object per thread runs `createForwarder` on its `ctx.storage.kv`. It also has
+  `/fold` and `/transcript` endpoints, and keeps the transcript in the same storage.
+  `bun run smoke:workers` runs it in real `workerd` through Miniflare.
+- [`examples/agent-loop.ts`](../examples/agent-loop.ts): your own loop calling the API, folding at each step.
+- [`examples/forwarding-server.ts`](../examples/forwarding-server.ts): a `node:http` server.
+- [`examples/proxy.ts`](../examples/proxy.ts): a Claude Code proxy with a file store.
 
 ## Payload types
 

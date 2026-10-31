@@ -9,6 +9,7 @@ import {
   createForwarder,
   createWindowLookup,
   foldThread,
+  listSubagentRecall,
   type Message,
   memoryStore,
   pinTurns,
@@ -322,7 +323,7 @@ describe("transcripts from the host's own messages", () => {
     expect(files["turn-0001.md"]).toContain("Deployment ID: dpl_transcript1")
     expect(files["turn-0001.md"]).toContain("bun run deploy")
     expect(files["index.md"]).toContain("deploy staging")
-    expect(Object.keys(renderTranscriptFiles(messages, "xml"))).toContain("turn-0001.xml")
+    expect(Object.keys(renderTranscriptFiles(messages, { format: "xml" }))).toContain("turn-0001.xml")
   })
 
   test("the guide points the agent at where the host stored them", () => {
@@ -330,5 +331,35 @@ describe("transcripts from the host's own messages", () => {
     expect(guide).toContain("/data/threads/t1/transcript")
     const out = rewrite(input(session(20, 3_000), { config: tight, sources: { guide, transcriptDir: "/data/threads/t1/transcript" } }))
     expect(sent(out.body.messages)).toContain("/data/threads/t1/transcript")
+  })
+})
+
+describe("subagents the host ran", () => {
+  const launch: Message = { role: "assistant", content: [{ type: "tool_use", id: "agent1", name: "Agent", input: { description: "find the flaky test", prompt: "find it" } }] }
+  const parent: Message[] = [user("why is CI red?"), launch, { role: "user", content: [{ type: "tool_result", tool_use_id: "agent1", content: "It is the retry test." }] }, reply("The retry test is flaky."), user("which seed made it fail?")]
+  const subagent = {
+    description: "find the flaky test",
+    toolUseId: "agent1",
+    messages: [
+      user("find it"),
+      call("s1", { command: "bun test --seed 4242" }),
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "s1", content: "FAIL retry.test.ts with seed 4242" }] },
+      reply("It is the retry test."),
+    ] as Message[],
+  }
+
+  test("what only the subagent saw comes back through recall, labelled with the subagent", () => {
+    const chunks = listSubagentRecall(parent, [subagent])
+    expect(chunks.every((chunk) => chunk.from === 'subagent "find the flaky test"' && chunk.turn === 1)).toBe(true)
+    const out = rewrite(input(parent, { sources: { listSubagentChunks: () => chunks } }))
+    expect(out.note.recalled).toBeGreaterThan(0)
+    expect(sent(out.body.messages)).toContain("seed 4242")
+  })
+
+  test("the transcript gets one file per subagent run, linked from the call that launched it", () => {
+    const files = renderTranscriptFiles(parent, { subagents: [subagent] })
+    expect(files["turn-0001-subagent-1.md"]).toContain("FAIL retry.test.ts with seed 4242")
+    expect(files["turn-0001.md"]).toContain("turn-0001-subagent-1.md")
+    expect(files["index.md"]).toContain("find the flaky test")
   })
 })

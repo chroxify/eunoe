@@ -44,6 +44,7 @@
     "test": "bun test",
     "check-types": "tsc --noEmit -p .",
     "build:core": "bun scripts/build-core.ts",
+    "smoke:workers": "bun run build:core && bun build examples/durable-object.ts --target=browser --format=esm --outfile dist/workers/durable-object.js && node test/workers-smoke.mjs",
     "lint": "biome check . && bun lint:conventions",
     "lint:conventions": "bun scripts/lint-conventions.ts",
     "format": "biome check .",
@@ -58,6 +59,7 @@
     "husky": "9.1.7",
     "knip": "6.41.0",
     "lint-staged": "16.4.0",
+    "miniflare": "4.20260730.0",
     "typescript": "^7.0.2"
   },
   "publishConfig": {

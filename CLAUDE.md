@@ -23,7 +23,7 @@ src/transcript/   Reading Claude Code session files and rendering them to markdo
 src/config/       ~/.eunoe/config.json: defaults, validation, per-session overrides; paths.ts for everything under ~/.eunoe
 src/version.ts    The package version
 test/             bun test, one file per area, fixtures.ts builds message histories
-examples/         tour.ts runs every core feature; hosts that embed it: a forwarding server, an agent loop, a Claude Code proxy
+examples/         tour.ts runs every core feature; hosts that embed it: a Durable Object, a forwarding server, an agent loop, a Claude Code proxy
 docs/api.md       The library's API reference: every export, its signature and an example
 bench/            The benchmark: arms, suites, component evals and the published results (bench/README.md)
 scripts/          Repo tooling (the conventions linter)
@@ -42,6 +42,7 @@ A value or type lives in the file that uses it. When several files need it, it l
 | `bunx knip` | Dead exports, files and dependencies; expected to be silent |
 | `bun src/cli/main.ts <command>` | Run the CLI from source |
 | `bun run build:core && node test/node-smoke.mjs` | Build the core for Node into `dist/` and run it there |
+| `bun run smoke:workers` | Run the Durable Object example in real `workerd` through Miniflare |
 
 Husky runs lint-staged Biome and the conventions check on commit, a conventional-commit check on the message, and `check-types` plus the tests on push. CI (`.github/workflows/ci.yml`) runs the same.
 
