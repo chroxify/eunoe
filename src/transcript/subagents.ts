@@ -2,7 +2,8 @@ import { readFileSync, statSync } from "node:fs"
 import path from "node:path"
 import { blocks, clip, contentBlocks, type Message } from "../context/content"
 import { splitTurns } from "../context/fold/turns"
-import { type RecallChunk, recallChunks } from "../context/recall"
+import type { RecallChunk } from "../context/recall"
+import { subagentRecall } from "../core/subagents"
 import { readSessionEntries } from "./entries"
 import { listEntries } from "./locate"
 import { sessionMessages } from "./messages"
@@ -163,8 +164,7 @@ export function subagentChunks(sessionFile: string): RecallChunk[] {
     const parentTurn = launchTurn(run, launches)
     const hit = chunkCache.get(key)
     if (hit && hit.mtimeMs === run.mtimeMs && hit.parentTurn === parentTurn) return hit.chunks
-    const from = `subagent "${run.description}"`
-    const chunks = recallChunks([...subagentMessages(run), { role: "user", content: "" }], new Map()).map((chunk) => ({ ...chunk, from, turn: parentTurn }))
+    const chunks = subagentRecall(subagentMessages(run), run.description, parentTurn)
     chunkCache.set(key, { mtimeMs: run.mtimeMs, parentTurn, chunks })
     return chunks
   })

@@ -1,9 +1,8 @@
 import { clip } from "../context/content"
 import type { ToolPart, TranscriptFormat, Turn } from "./parse"
-import type { SubagentRun } from "./subagents"
 
 export interface SubagentRecord {
-  run: SubagentRun
+  run: { description: string }
   turns: Turn[]
   parentTurn: number
   file: string

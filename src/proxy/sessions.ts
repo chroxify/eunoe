@@ -1,6 +1,6 @@
 import { closeSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from "node:fs"
-import type { Mode } from "../config"
 import { EUNOE_DIR, paths } from "../config/paths"
+import type { Mode } from "../core/config"
 
 interface SeenSession {
   lastSeen: string

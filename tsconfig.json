@@ -7,8 +7,9 @@
     "noEmit": true,
     "types": ["bun-types"],
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "customConditions": ["bun"]
   },
-  "include": ["src", "test", "bench", "scripts"],
-  "exclude": ["node_modules", "bench/out", "bench/tools/models"]
+  "include": ["src", "test", "bench", "scripts", "examples"],
+  "exclude": ["node_modules", "bench/out", "bench/tools/models", "dist"]
 }

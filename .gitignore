@@ -11,3 +11,6 @@ bench/out/
 .kanna
 
 launch/
+# The built core for Node, from `bun run build:core`.
+dist/
+dist.build-*/

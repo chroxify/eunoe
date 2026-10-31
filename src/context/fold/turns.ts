@@ -6,9 +6,18 @@ export interface ReduceOptions {
   evidence?: boolean
 }
 
+const IMAGE_NOTE = /^\s*\[Image: original \d+x\d+, displayed at \d+x\d+\.[^\]]*\]\s*$/
+
+const STALE_NOTE = /changed on disk since you last read it|was modified, either by the user or by a linter/
+
+export const isStaleNote = (text: unknown) => STALE_NOTE.test(String(text ?? ""))
+
+const isImageNote = (content: Block[]) => content.length > 0 && content.every((block) => block.type === "text" && IMAGE_NOTE.test(String(block.text ?? "")))
+
 export function isPrompt(message: Message) {
   if (message.role !== "user") return false
   const content = blocks(message)
+  if (isImageNote(content)) return false
   return !content.some((block) => block.type === "tool_result") && content.some((block) => block.type === "text" || block.type === "image" || block.type === "document")
 }
 
@@ -39,7 +48,18 @@ export function hasContent(message: Message) {
 const hasText = (block: Block) => block.type === "text" && String(block.text ?? "").trim() !== ""
 
 function mergedHarness(turn: Message[]): Message[] {
-  const content = turn.filter((m) => isHarness(m) && hasContent(m)).flatMap((m) => blocks(m).map(withoutCacheControl))
+  const seen = new Set<string>()
+  const fresh = (block: Block) => {
+    if (block.type !== "text") return true
+    const text = String(block.text ?? "")
+    if (isStaleNote(text) || seen.has(text)) return false
+    seen.add(text)
+    return true
+  }
+  const content = turn
+    .filter((m) => isHarness(m) && hasContent(m))
+    .flatMap((m) => blocks(m).map(withoutCacheControl))
+    .filter(fresh)
   return content.length > 0 ? [{ role: "system", content }] : []
 }
 
@@ -56,7 +76,7 @@ function interrupted(turn: Message[]): string {
 function carriedText(messages: Message[]): Block[] {
   return messages
     .filter((m) => m.role === "user")
-    .flatMap((m) => blocks(m).filter((b) => hasText(b) && !/^\s*(?:<system-reminder>[\s\S]*?<\/system-reminder>\s*)+$/.test(String(b.text))))
+    .flatMap((m) => blocks(m).filter((b) => hasText(b) && !IMAGE_NOTE.test(String(b.text)) && !/^\s*(?:<system-reminder>[\s\S]*?<\/system-reminder>\s*)+$/.test(String(b.text))))
     .map((b) => ({ type: "text", text: b.text }))
 }
 

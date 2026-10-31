@@ -33,4 +33,6 @@ jobs:
           bun-version: latest
       - run: bun install --frozen-lockfile
       - run: bun check-types
+      - run: bun run build:core && node test/node-smoke.mjs && node examples/tour.ts
+      - run: bun run smoke:workers
       - run: bun run test

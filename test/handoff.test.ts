@@ -3,8 +3,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import path from "node:path"
 import { continuePrompt } from "../src/cli/sessions"
 import { paths } from "../src/config/paths"
-import { messageFingerprint } from "../src/proxy/fingerprint"
-import { continueIdOf, continueToken } from "../src/proxy/handoff"
+import { messageFingerprint } from "../src/core/fingerprint"
+import { continueIdOf, continueToken } from "../src/core/handoff"
 import { handle } from "../src/proxy/server"
 import { freshSession } from "./fixtures"
 

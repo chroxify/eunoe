@@ -1,7 +1,7 @@
 import path from "node:path"
 import { type Config, modeFor, overrides, readConfig } from "../../config"
 import { paths } from "../../config/paths"
-import { rerankKey } from "../../context/recall/rerank"
+import { rerankKey } from "../../proxy/rewrite"
 import type { Health } from "../../proxy/server"
 import { seenSessions } from "../../proxy/sessions"
 import { VERSION } from "../../version"

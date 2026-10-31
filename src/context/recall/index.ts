@@ -123,9 +123,8 @@ export function recallChunks(messages: Message[], keptIds: Map<string, string>, 
         )
         .filter(Boolean)
         .join("\n")
-      const built = chunksOf(said ? `${size}|said|${turnIndex}|${said}` : null, said, "agent", turnIndex + 1, () =>
-        windows(said.split("\n"), size).map((window) => ({ turn: turnIndex + 1, call: "agent", lines: window, terms: terms(window.join("\n")) })),
-      )
+      if (!said) return
+      const built = chunksOf(`${size}|said|${turnIndex}|${said}`, said, "agent", turnIndex + 1, () => windows(said.split("\n"), size).map((window) => ({ turn: turnIndex + 1, call: "agent", lines: window, terms: terms(window.join("\n")) })))
       for (const chunk of built) chunks.push(chunk)
     })
   return chunks

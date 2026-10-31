@@ -1,5 +1,3 @@
-import { existsSync, readFileSync } from "node:fs"
-import { paths } from "../../config/paths"
 import { rerankQuestion } from "../prompts"
 import type { RecallChunk, Reranker } from "."
 
@@ -8,12 +6,6 @@ interface RerankAnswer {
 }
 
 const TIMEOUT_MS = 4_000
-
-export function rerankKey(): string | null {
-  const env = process.env.TYPESAFE_API_KEY?.trim()
-  if (env) return env
-  return existsSync(paths.typesafeKey) ? readFileSync(paths.typesafeKey, "utf8").trim() : null
-}
 
 function rerankState(chunks: RecallChunk[], candidates: number[]): string {
   return candidates
